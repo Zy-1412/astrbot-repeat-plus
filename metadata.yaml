@@ -4,5 +4,5 @@ desc: QQ 群复读增强插件，支持文本/图片/表情复读、模糊匹配
 short_desc: QQ群复读增强插件，支持模糊匹配、打断、排行榜、抽老公/老婆双模式、关系图、求婚及可视化配置。
 version: v1.2.2
 author: AstrBot Community
-repo: https://github.com/AstrBotDevs/AstrBot
+repo: https://github.com/Zy-1412/Repeat-plus
 astrbot_version: ">=4.0.0"
