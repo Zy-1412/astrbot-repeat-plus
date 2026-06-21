@@ -1,0 +1,341 @@
+{
+    "threshold": {
+        "group": "🎯 复读判定",
+        "description": "触发阈值",
+        "type": "int",
+        "default": 3,
+        "min": 1,
+        "max": 20,
+        "hint": "滑动窗口内出现多少条相似消息时触发复读。建议 2~5，越小越容易触发。"
+    },
+    "window_size": {
+        "group": "🎯 复读判定",
+        "description": "判定窗口大小",
+        "type": "int",
+        "default": 5,
+        "min": 2,
+        "max": 20,
+        "hint": "回顾最近 N 条消息寻找重复。越大越宽松，但影响性能。上限 20。"
+    },
+    "fuzzy_threshold": {
+        "group": "🎯 复读判定",
+        "description": "模糊匹配灵敏度",
+        "type": "float",
+        "default": 0.9,
+        "min": 0.5,
+        "max": 1.0,
+        "hint": "1.0 = 完全一致才触发；0.9 = 允许 10% 差异（标点、错别字）；0.8 = 更宽松。仅对纯文本生效。"
+    },
+    "enable_weight_decay": {
+        "group": "🎯 复读判定",
+        "description": "权重衰减",
+        "type": "bool",
+        "default": false,
+        "hint": "开启后越新的消息对判定贡献越大，让复读紧跟最新趋势而非被早期消息拖累。"
+    },
+    "allow_same_user": {
+        "group": "🎯 复读判定",
+        "description": "同一用户连续刷也算数",
+        "type": "bool",
+        "default": true,
+        "hint": "开启：同一人连续发相同内容计入触发。关闭：必须是不同人发相同内容才算，更像自然复读。"
+    },
+    "min_message_length": {
+        "group": "🎯 复读判定",
+        "description": "消息最小长度",
+        "type": "int",
+        "default": 1,
+        "min": 0,
+        "hint": "低于此长度的消息不参与复读。设为 2 可过滤「啊」「？」等单字。0 = 不限制。"
+    },
+    "max_message_length": {
+        "group": "🎯 复读判定",
+        "description": "消息最大长度",
+        "type": "int",
+        "default": 200,
+        "min": 0,
+        "hint": "超过此长度的消息不参与复读，防止长文转发刷屏。0 = 不限制。"
+    },
+
+    "cooldown_time": {
+        "group": "⏱️ 冷却与抑制",
+        "description": "复读冷却（秒）",
+        "type": "int",
+        "default": 10,
+        "min": 0,
+        "hint": "同一群两次复读的最小间隔。10 秒适中。0 = 无冷却（不推荐，会刷屏）。"
+    },
+    "cooldown_escalation": {
+        "group": "⏱️ 冷却与抑制",
+        "description": "冷却递增",
+        "type": "bool",
+        "default": true,
+        "hint": "开启后连续触发复读时冷却逐次递增（最多 5 倍），5 分钟无触发自动回落。"
+    },
+    "duplicate_suppression_seconds": {
+        "group": "⏱️ 冷却与抑制",
+        "description": "重复抑制（秒）",
+        "type": "int",
+        "default": 60,
+        "min": 0,
+        "hint": "同一条消息在 N 秒内只复读一次，防止短命梗反复触发。0 = 关闭。"
+    },
+    "interrupt_cooldown_multiplier": {
+        "group": "⏱️ 冷却与抑制",
+        "description": "打断惩罚倍率",
+        "type": "float",
+        "default": 2.0,
+        "min": 1.0,
+        "max": 5.0,
+        "hint": "打断（洗牌、反向等）对群聊干扰更大，因此额外延长冷却。2.0 = 翻倍。1.0 = 不惩罚。"
+    },
+
+    "interrupt_probability": {
+        "group": "🎭 打断系统",
+        "description": "打断基础概率",
+        "type": "float",
+        "default": 0.1,
+        "min": 0.0,
+        "max": 1.0,
+        "hint": "触发复读时有此概率进入打断分支。实际概率随重复次数递增，最多 1.0。0 = 关闭打断。"
+    },
+    "interrupt_shuffle": {
+        "group": "🎭 打断系统",
+        "description": "原话洗牌",
+        "type": "bool",
+        "default": true,
+        "hint": "将消息文字随机打乱后发出。"
+    },
+    "interrupt_reverse": {
+        "group": "🎭 打断系统",
+        "description": "反向复读",
+        "type": "bool",
+        "default": true,
+        "hint": "将消息文字反转输出。"
+    },
+    "interrupt_custom": {
+        "group": "🎭 打断系统",
+        "description": "自定义话术",
+        "type": "bool",
+        "default": true,
+        "hint": "从下方自定义话术列表中随机选一句发送。"
+    },
+    "interrupt_silent": {
+        "group": "🎭 打断系统",
+        "description": "终止复读",
+        "type": "bool",
+        "default": false,
+        "hint": "不发送任何消息，仅施加冷却惩罚。适合低调打断场景。"
+    },
+    "custom_interrupt_texts": {
+        "group": "🎭 打断系统",
+        "description": "自定义打断话术",
+        "type": "text",
+        "default": "打破复读机！\n复读终止！\n+1s",
+        "hint": "启用「自定义话术」打断方式时，从此列表中随机抽取一句发送。每行一句。"
+    },
+
+    "human_delay": {
+        "group": "🎨 复读风格",
+        "description": "模拟延迟（秒）",
+        "type": "string",
+        "default": "0.5-2.0",
+        "hint": "复读前随机等待的时间范围，让机器人更像真人。格式：'最少-最多'，如 '1-3'。'0' = 立刻复读。"
+    },
+    "fast_mode": {
+        "group": "🎨 复读风格",
+        "description": "极速模式",
+        "type": "bool",
+        "default": false,
+        "hint": "开启后跳过所有延迟，触发复读后立即回复。关闭时延迟生效（更自然）。"
+    },
+
+    "content_blacklist": {
+        "group": "🛡️ 过滤",
+        "description": "内容黑名单（正则）",
+        "type": "text",
+        "default": "admin|【",
+        "hint": "消息文本匹配此正则则跳过复读。默认过滤系统通知格式。留空不启用。仅对纯文本生效。"
+    },
+    "ignored_groups": {
+        "group": "🛡️ 过滤",
+        "description": "屏蔽群号",
+        "type": "text",
+        "default": "",
+        "hint": "这些群的消息不参与复读。逗号或换行分隔。也可在群内发 /复读关闭 临时关闭。"
+    },
+    "ignored_users": {
+        "group": "🛡️ 过滤",
+        "description": "屏蔽用户 QQ",
+        "type": "text",
+        "default": "",
+        "hint": "这些用户的消息不触发复读。逗号或换行分隔。注意：别人复读 TA 的消息不受影响。"
+    },
+
+    "debug_mode": {
+        "group": "🔧 系统",
+        "description": "调试模式",
+        "type": "bool",
+        "default": false,
+        "hint": "开启后在日志中输出复读判定细节（匹配项、得分等）。日常使用请保持关闭。"
+    },
+
+    "enable_husband": {
+        "group": "💕 抽取设置",
+        "description": "开启老公模式",
+        "type": "bool",
+        "default": true,
+        "hint": "/今日老公 /抽老公 /强娶老公 等指令生效。可与老婆模式共存。"
+    },
+    "enable_wife": {
+        "group": "💕 抽取设置",
+        "description": "开启老婆模式",
+        "type": "bool",
+        "default": true,
+        "hint": "/今日老婆 /抽老婆 /强娶老婆 等指令生效。可与老公模式共存，共享数据池，仅话术不同。"
+    },
+    "husband_daily_limit": {
+        "group": "💕 抽取设置",
+        "description": "每日抽取次数",
+        "type": "int",
+        "default": 1,
+        "min": 1,
+        "max": 10,
+        "hint": "每人每天最多可抽取的次数。默认 1 次。"
+    },
+    "husband_active_days": {
+        "group": "💕 抽取设置",
+        "description": "活跃天数",
+        "type": "int",
+        "default": 30,
+        "min": 7,
+        "max": 90,
+        "hint": "最近 N 天内发过言的人才能进入抽取池。默认 30 天。"
+    },
+    "husband_require_active": {
+        "group": "💕 抽取设置",
+        "description": "仅活跃成员可被抽",
+        "type": "bool",
+        "default": true,
+        "hint": "开启：仅发言过的人可被抽。关闭：全群成员均可被抽（每次调用群成员 API）。"
+    },
+    "husband_excluded_users": {
+        "group": "💕 抽取设置",
+        "description": "排除用户 QQ",
+        "type": "text",
+        "default": "",
+        "hint": "这些 QQ 号永远不会被抽到。逗号或换行分隔。适合排除机器人或不想参与的成员。"
+    },
+    "max_records": {
+        "group": "💕 抽取设置",
+        "description": "候选池上限",
+        "type": "int",
+        "default": 500,
+        "min": 10,
+        "max": 10000,
+        "hint": "活跃用户超过此数时随机截取，防止超大群影响性能。0 = 不限制。"
+    },
+    "whitelist_groups": {
+        "group": "💕 抽取设置",
+        "description": "群组白名单",
+        "type": "text",
+        "default": "",
+        "hint": "仅这些群启用抽人功能。留空不限制。优先级高于黑名单。"
+    },
+    "blacklist_groups": {
+        "group": "💕 抽取设置",
+        "description": "群组黑名单",
+        "type": "text",
+        "default": "",
+        "hint": "这些群禁用抽人功能。留空不限制。"
+    },
+
+    "husband_force_cd_days": {
+        "group": "💍 强娶与求婚",
+        "description": "强娶冷却天数",
+        "type": "int",
+        "default": 3,
+        "min": 1,
+        "max": 30,
+        "hint": "使用 /强娶 后需等待的天数。默认 3 天。"
+    },
+    "husband_force_daily": {
+        "group": "💍 强娶与求婚",
+        "description": "强娶每日次数",
+        "type": "int",
+        "default": 1,
+        "min": 0,
+        "max": 99,
+        "hint": "每人每天强娶次数上限。0 = 不限制。"
+    },
+    "husband_propose_daily": {
+        "group": "💍 强娶与求婚",
+        "description": "求婚每日次数",
+        "type": "int",
+        "default": 3,
+        "min": 0,
+        "max": 99,
+        "hint": "每人每天求婚次数上限。0 = 不限制。"
+    },
+    "husband_propose_cd": {
+        "group": "💍 强娶与求婚",
+        "description": "求婚冷却（秒）",
+        "type": "int",
+        "default": 86400,
+        "min": 0,
+        "max": 604800,
+        "hint": "两次求婚最小间隔。默认 86400 秒（1 天）。0 = 无冷却。"
+    },
+    "allow_marry_bot": {
+        "group": "💍 强娶与求婚",
+        "description": "允许强娶机器人",
+        "type": "bool",
+        "default": false,
+        "hint": "开启后允许用户强娶机器人。默认关闭。"
+    },
+
+    "husband_keyword_trigger": {
+        "group": "⚙️ 高级选项",
+        "description": "关键词触发",
+        "type": "bool",
+        "default": false,
+        "hint": "开启后，群聊中直接发「抽老公」「我的老婆」等词（免 / 前缀）即可触发。"
+    },
+    "keyword_trigger_mode": {
+        "group": "⚙️ 高级选项",
+        "description": "关键词匹配模式",
+        "type": "string",
+        "default": "exact",
+        "hint": "exact=完全匹配；starts_with=前缀匹配；contains=包含匹配。需先开启「关键词触发」。"
+    },
+    "at_waifu": {
+        "group": "⚙️ 高级选项",
+        "description": "@ 中奖人",
+        "type": "bool",
+        "default": false,
+        "hint": "开启后抽取结果中自动 @ 被抽到的用户。"
+    },
+    "auto_set_other_half": {
+        "group": "⚙️ 高级选项",
+        "description": "双向绑定",
+        "type": "bool",
+        "default": false,
+        "hint": "A 抽到 B 时自动给 B 也分配 A，实现双向奔赴。"
+    },
+    "auto_withdraw_enabled": {
+        "group": "⚙️ 高级选项",
+        "description": "自动撤回",
+        "type": "bool",
+        "default": false,
+        "hint": "开启后抽取结果在指定秒数后自动撤回，保持群聊整洁。"
+    },
+    "auto_withdraw_delay_seconds": {
+        "group": "⚙️ 高级选项",
+        "description": "撤回延迟（秒）",
+        "type": "int",
+        "default": 30,
+        "min": 5,
+        "max": 300,
+        "hint": "自动撤回前等待的秒数。需先开启「自动撤回」。"
+    }
+}
