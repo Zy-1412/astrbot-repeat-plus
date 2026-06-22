@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""AstrBot 复读增强插件 v1.2.3 — 二次方向心力 + 防边缘逃逸"""
+"""AstrBot 复读增强插件 v1.2.4 — 连线发光+加粗+加亮，长距离可见"""
 
 import random, logging, time, re, copy, asyncio, json, os, math, io
 from typing import Dict, List, Set, Optional, Tuple, Any
@@ -305,7 +305,7 @@ class RepeatPlusPlugin(Star):
         # 关键词路由表
         self._build_hub_keywords()
 
-        self._log(logging.INFO, "插件已加载 v1.2.3 (二次方向心力)")
+        self._log(logging.INFO, "插件已加载 v1.2.4 (连线发光)")
 
     # ============================================================
     # 数据持久化
@@ -1569,13 +1569,16 @@ class RepeatPlusPlugin(Star):
         for gy in range(0, H, 80):
             draw.line([(0, gy), (chart_w, gy)], fill="#1f1f3a", width=1)
 
-        # 画连线 (贝塞尔曲线)
+        # 画连线 (贝塞尔曲线 + 发光层)
         seen_pairs: Set[Tuple[str, str]] = set()
         for s_name, t_name, tp in edges:
             fx, fy = positions.get(s_name, (0, 0))
             tx, ty = positions.get(t_name, (0, 0))
-            color = "#ff6b6b" if tp == "force" else "#4ecdc4"
-            w = 3 if tp == "force" else 2
+            # 加亮颜色：对比度从 3.5:1 提升至 6:1+
+            glow_color = "#7fffd4" if tp == "force" else "#7fffd4"  # 发光层统一用亮青
+            line_color = "#ff8787" if tp == "force" else "#5ef7f0"  # 主线：亮红/亮青
+            w_line = 5 if tp == "force" else 3.5  # 主线宽度
+            w_glow = 9 if tp == "force" else 7  # 发光层宽度
 
             # 缩到节点边缘
             ddx, ddy = tx - fx, ty - fy
@@ -1586,9 +1589,10 @@ class RepeatPlusPlugin(Star):
             fx2, fy2 = fx + ux * sr, fy + uy * sr
             tx2, ty2 = tx - ux * tr, ty - uy * tr
 
-            # 贝塞尔控制点：垂直于连线方向偏移
+            # 贝塞尔控制点：曲线偏移量随距离加大，长距离连线更弯曲
+            base_curve = 40 if tp == "force" else 30
+            curve_off = base_curve + dist * 0.06  # 距离越长弯曲越大
             perp_x, perp_y = -uy, ux
-            curve_off = 35 if tp == "force" else 25
             # 双向边：第二条反向边向相反方向弯曲
             pair = (s_name, t_name)
             rev_pair = (t_name, s_name)
@@ -1598,7 +1602,7 @@ class RepeatPlusPlugin(Star):
             cpx = (fx2 + tx2) / 2 + perp_x * curve_off
             cpy = (fy2 + ty2) / 2 + perp_y * curve_off
 
-            # 绘制贝塞尔曲线
+            # 贝塞尔曲线点
             steps = 30
             pts = []
             for k in range(steps + 1):
@@ -1606,28 +1610,31 @@ class RepeatPlusPlugin(Star):
                 bx = (1 - t) ** 2 * fx2 + 2 * (1 - t) * t * cpx + t ** 2 * tx2
                 by = (1 - t) ** 2 * fy2 + 2 * (1 - t) * t * cpy + t ** 2 * ty2
                 pts.append((bx, by))
-            for k in range(len(pts) - 1):
-                draw.line([pts[k], pts[k + 1]], fill=color, width=w)
 
-            # 箭头 (在曲线末端)
+            # 发光层：先画粗的半透明底边
+            for k in range(len(pts) - 1):
+                draw.line([pts[k], pts[k + 1]], fill=glow_color, width=int(w_glow))
+            # 主线：画在发光层之上
+            for k in range(len(pts) - 1):
+                draw.line([pts[k], pts[k + 1]], fill=line_color, width=int(w_line))
+
+            # 箭头
             ex, ey = pts[-1]
             px, py = pts[-2]
             arrow_angle = math.atan2(ey - py, ex - px)
-            arrow = 11
+            arrow = 14
             ax = ex - arrow * math.cos(arrow_angle - 0.55)
             ay = ey - arrow * math.sin(arrow_angle - 0.55)
             bx = ex - arrow * math.cos(arrow_angle + 0.55)
             by = ey - arrow * math.sin(arrow_angle + 0.55)
-            draw.polygon([(ex, ey), (ax, ay), (bx, by)], fill=color)
+            draw.polygon([(ex, ey), (ax, ay), (bx, by)], fill=glow_color)
+            draw.polygon([(ex, ey), (ax, ay), (bx, by)], fill=line_color)
 
             # 边标签
             label = "强娶" if tp == "force" else "抽"
-            lbl_x = (fx2 + tx2) / 2
-            lbl_y = (fy2 + ty2) / 2
-            # 标签偏移到曲线外侧
-            lbl_x += perp_x * (curve_off * 0.7)
-            lbl_y += perp_y * (curve_off * 0.7)
-            draw.text((lbl_x, lbl_y), label, fill=color, font=font_small,
+            lbl_x = (fx2 + tx2) / 2 + perp_x * (curve_off * 0.7)
+            lbl_y = (fy2 + ty2) / 2 + perp_y * (curve_off * 0.7)
+            draw.text((lbl_x, lbl_y), label, fill=line_color, font=font_small,
                       anchor="mm")
 
         # 并发下载头像（ThreadPoolExecutor，上限 16 线程）
@@ -1757,8 +1764,8 @@ class RepeatPlusPlugin(Star):
         y += 22
         legends = [
             ("#3498db", "抽取者"), ("#e74c3c", "被抽者"),
-            ("#9b59b6", "双向"), ("#4ecdc4", "抽取边"),
-            ("#ff6b6b", "强娶边"),
+            ("#9b59b6", "双向"), ("#5ef7f0", "抽取边"),
+            ("#ff8787", "强娶边"),
         ]
         for color, label in legends:
             draw.ellipse([(panel_x + 15, y + 2), (panel_x + 25, y + 12)],
@@ -2077,7 +2084,7 @@ class RepeatPlusPlugin(Star):
         else:
             hub_section = "💕 抽老公/老婆功能未开启，请在管理面板中启用。\n"
         await event.send(event.plain_result(
-            f"\U0001F4DF 复读插件 v1.2.3 指令帮助\n{'─'*30}\n"
+            f"\U0001F4DF 复读插件 v1.2.4 指令帮助\n{'─'*30}\n"
             f"🔧 管理（仅群聊）\n"
             "  /复读开启          在本群开启复读\n"
             "  /复读关闭          在本群关闭复读\n"
@@ -2086,7 +2093,7 @@ class RepeatPlusPlugin(Star):
             f"{'─'*30}\n"
             f"🏆 排行榜（仅群聊）\n{rl}\n{'─'*30}\n{hub_section}"
             f"{'─'*30}\n"
-            f"🔥 v1.2.3 正式版：二次方向心力 / 防边缘逃逸 / 并发头像\n"
+            f"🔥 v1.2.4 正式版：连线发光加粗 / 二次方向心力 / 并发头像\n"
             f"⚙️ 更多参数请在 WebUI 管理面板调整"))
 
     # ============================================================
