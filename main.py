@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""AstrBot 复读增强插件 v1.2.2 — 全自适应力导向（2~50+人）"""
+"""AstrBot 复读增强插件 v1.2.3 — 二次方向心力 + 防边缘逃逸"""
 
 import random, logging, time, re, copy, asyncio, json, os, math, io
 from typing import Dict, List, Set, Optional, Tuple, Any
@@ -305,7 +305,7 @@ class RepeatPlusPlugin(Star):
         # 关键词路由表
         self._build_hub_keywords()
 
-        self._log(logging.INFO, "插件已加载 v1.2.2 (全自适应)")
+        self._log(logging.INFO, "插件已加载 v1.2.3 (二次方向心力)")
 
     # ============================================================
     # 数据持久化
@@ -1452,13 +1452,13 @@ class RepeatPlusPlugin(Star):
         positions: Dict[str, Tuple[float, float]] = {}
         margin = 30
         area = chart_w * H
-        k = math.sqrt(area / n) * 0.55  # 理想边长，随人数自动缩小
 
-        # 自适应初始化半径：保证初始圆环上节点间距 ≥ 平均直径，避免初始重叠
+        # 自适应初始化半径：保证初始圆环上节点间距 ≥ 平均直径，但不超过画布 35%
         avg_node_r = sum(node_r.values()) / n
         need_circ = n * (avg_node_r * 2 + 8)  # 所需最小周长
-        init_r = max(need_circ / (2 * math.pi), min(chart_w, H) * 0.20)
-        init_r = min(init_r, min(chart_w, H) * 0.48 - avg_node_r - margin)
+        init_r = max(need_circ / (2 * math.pi), min(chart_w, H) * 0.18)
+        # 上限收紧：不要一开始就把节点放到画布边缘
+        init_r = min(init_r, min(chart_w, H) * 0.28)
         rng = random.Random(int(time.time() * 1000) % 1000000)
         # 扰动幅度随人数自适应
         jitter = max(3, min(15, int(240 / math.sqrt(n))))
@@ -1468,10 +1468,11 @@ class RepeatPlusPlugin(Star):
                               cy + init_r * math.sin(angle) + rng.uniform(-jitter, jitter))
 
         # 力导向参数自适应
+        k = math.sqrt(area / n) * 0.48  # 理想边长，略紧于标准 FR
         temp_start = chart_w / 4.0
         temp_end = max(chart_w / 500.0, chart_w / (n * 6.0))
-        iterations = max(150, min(350, n * 5))
-        center_gravity = 0.005 + n * 0.00015  # 50人≈0.0125，10人≈0.0065
+        iterations = max(200, min(400, n * 6))
+        center_gravity = 1.5 + n * 0.015  # 二次方向心力系数，50人≈2.25，23人≈1.85
         for it in range(iterations):
             temp = temp_start + (temp_end - temp_start) * (it / iterations)
             disp: Dict[str, Tuple[float, float]] = {name: (0.0, 0.0) for name in node_list}
@@ -1506,12 +1507,17 @@ class RepeatPlusPlugin(Star):
                 da, db = disp[a_name], disp[b_name]
                 disp[a_name] = (da[0] - fx, da[1] - fy)
                 disp[b_name] = (db[0] + fx, db[1] + fy)
-            # 向心力：拉回中心，人数越多引力越强
+            # 二次方向心力：靠近中心弱（自由扩散），靠近边缘急剧增强（防逃逸）
             for name in node_list:
                 dx_c = cx - positions[name][0]
                 dy_c = cy - positions[name][1]
-                d_c = disp[name]
-                disp[name] = (d_c[0] + dx_c * center_gravity, d_c[1] + dy_c * center_gravity)
+                dist_c = math.hypot(dx_c, dy_c)
+                if dist_c > 1.0:
+                    # 力 = 方向 × (距离²/画布宽度) × 系数，边缘处力很强
+                    force_c = (dist_c * dist_c / chart_w) * center_gravity
+                    d_c = disp[name]
+                    disp[name] = (d_c[0] + (dx_c / dist_c) * force_c,
+                                  d_c[1] + (dy_c / dist_c) * force_c)
             # 应用位移 + 温控限制 + 边界钳制
             for name in node_list:
                 d = disp[name]
@@ -2071,7 +2077,7 @@ class RepeatPlusPlugin(Star):
         else:
             hub_section = "💕 抽老公/老婆功能未开启，请在管理面板中启用。\n"
         await event.send(event.plain_result(
-            f"\U0001F4DF 复读插件 v1.2.2 指令帮助\n{'─'*30}\n"
+            f"\U0001F4DF 复读插件 v1.2.3 指令帮助\n{'─'*30}\n"
             f"🔧 管理（仅群聊）\n"
             "  /复读开启          在本群开启复读\n"
             "  /复读关闭          在本群关闭复读\n"
@@ -2080,7 +2086,7 @@ class RepeatPlusPlugin(Star):
             f"{'─'*30}\n"
             f"🏆 排行榜（仅群聊）\n{rl}\n{'─'*30}\n{hub_section}"
             f"{'─'*30}\n"
-            f"🔥 v1.2.2 正式版：全自适应力导向 / 2~50+人 / 并发头像\n"
+            f"🔥 v1.2.3 正式版：二次方向心力 / 防边缘逃逸 / 并发头像\n"
             f"⚙️ 更多参数请在 WebUI 管理面板调整"))
 
     # ============================================================
