@@ -305,7 +305,7 @@ class RepeatPlusPlugin(Star):
         # 关键词路由表
         self._build_hub_keywords()
 
-        self._log(logging.INFO, "插件已加载 v1.2.5 (活跃追踪修复)")
+        self._log(logging.INFO, "插件已加载 v1.2.6 (并发安全修复)")
 
     # ============================================================
     # 数据持久化
@@ -586,8 +586,7 @@ class RepeatPlusPlugin(Star):
                     before = len(self._hub_active[g])
                     self._hub_active[g] = {
                         u: d for u, d in self._hub_active[g].items()
-                        if d.get("ts", 0) == 0
-                        or d.get("ts", 0) >= hub_cutoff
+                        if d.get("ts", 0) >= hub_cutoff
                     }
                     hub_pruned += before - len(self._hub_active[g])
                     # 仅当活跃用户为空且记录非今天/昨天时才清理该群数据
@@ -915,7 +914,7 @@ class RepeatPlusPlugin(Star):
         return tpl_key, self._hb(tpl_key, mode).format(**fmt), h["husband_id"]
 
     def _hub_init_today(self, gid: str) -> List[Dict[str, Any]]:
-        """初始化今日记录并返回记录列表引用（setdefault 模式避免并发覆盖）"""
+        """初始化今日记录并返回记录列表引用 — 调用方必须在锁内"""
         today = datetime.now().strftime("%Y-%m-%d")
         rec = self._hub_records.setdefault(gid, {"date": today, "records": []})
         if rec.get("date") != today:
@@ -924,7 +923,7 @@ class RepeatPlusPlugin(Star):
         return rec["records"]
 
     def _hub_rbq_incr(self, gid: str, target_id: str) -> None:
-        """排行榜计数 +1（force/propose 共用）"""
+        """排行榜计数 +1（force/propose 共用）— 调用方必须在锁内"""
         self._hub_rbq.setdefault(gid, {})[target_id] = \
             self._hub_rbq[gid].get(target_id, 0) + 1
 
@@ -2084,7 +2083,7 @@ class RepeatPlusPlugin(Star):
         else:
             hub_section = "💕 抽老公/老婆功能未开启，请在管理面板中启用。\n"
         await event.send(event.plain_result(
-            f"\U0001F4DF 复读插件 v1.2.5 指令帮助\n{'─'*30}\n"
+            f"\U0001F4DF 复读插件 v1.2.6 指令帮助\n{'─'*30}\n"
             f"🔧 管理（仅群聊）\n"
             "  /复读开启          在本群开启复读\n"
             "  /复读关闭          在本群关闭复读\n"
@@ -2093,7 +2092,7 @@ class RepeatPlusPlugin(Star):
             f"{'─'*30}\n"
             f"🏆 排行榜（仅群聊）\n{rl}\n{'─'*30}\n{hub_section}"
             f"{'─'*30}\n"
-            f"🔥 v1.2.5 正式版：活跃追踪独立 / 连线发光 / 并发头像\n"
+            f"🔥 v1.2.6 正式版：并发安全修复 / 活跃追踪 / 连线发光\n"
             f"⚙️ 更多参数请在 WebUI 管理面板调整"))
 
     # ============================================================
@@ -2205,18 +2204,18 @@ class RepeatPlusPlugin(Star):
         now = time.time()
         cfg = self._cfg
 
-        # 重复抑制：同一签名在抑制窗口内只处理一次
+        # 重复抑制：同一签名在抑制窗口内只处理一次（加锁防竞态）
         if cfg["dup_suppress"] > 0:
-            ls, lt = self.last_repeated_sig.get(gid, ("", 0))
-            if saved_sig == ls and now - lt < cfg["dup_suppress"]:
-                self._dbg(f"群 {gid} 重复抑制: {saved_sig[:30]}")
-                async with self.lock:
+            async with self.lock:
+                ls, lt = self.last_repeated_sig.get(gid, ("", 0))
+                if saved_sig == ls and now - lt < cfg["dup_suppress"]:
+                    self._dbg(f"群 {gid} 重复抑制: {saved_sig[:30]}")
                     self.group_history[gid] = deque(
                         [h for h in self.group_history[gid]
                          if not self._similar(saved_sig, saved_txt, h[0], h[3])],
                         maxlen=self.group_history[gid].maxlen)
-                return
-            self.last_repeated_sig[gid] = (saved_sig, now)
+                    return
+                self.last_repeated_sig[gid] = (saved_sig, now)
 
         # 贡献者收集
         contrib = self._contribs(gid, saved_sig, saved_txt, sid, sname)
@@ -2237,7 +2236,8 @@ class RepeatPlusPlugin(Star):
                 if "-" in dc: lo, hi = map(float, dc.split("-"))
                 else: lo = hi = float(dc)
                 if lo > 0 or hi > 0: await asyncio.sleep(random.uniform(lo, hi))
-            except (ValueError, TypeError): pass
+            except (ValueError, TypeError):
+                self._dbg(f"human_delay 配置解析失败: '{dc}'，跳过延迟")
 
         # 分支
         bp = cfg["intr_prob"]
