@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""AstrBot 复读增强插件 v1.2.5 — 活跃追踪独立于复读白名单"""
+"""AstrBot 复读增强插件 v1.2.7 — 抽取功能数据完整性修复"""
 
 import random, logging, time, re, copy, asyncio, json, os, math, io
 from typing import Dict, List, Set, Optional, Tuple, Any
@@ -305,7 +305,7 @@ class RepeatPlusPlugin(Star):
         # 关键词路由表
         self._build_hub_keywords()
 
-        self._log(logging.INFO, "插件已加载 v1.2.6 (并发安全修复)")
+        self._log(logging.INFO, "插件已加载 v1.2.7 (抽取数据完整性修复)")
 
     # ============================================================
     # 数据持久化
@@ -1007,10 +1007,10 @@ class RepeatPlusPlugin(Star):
         uid = str(event.get_sender_id())
         bid = str(getattr(event.message_obj, 'self_id', ''))
 
-        today_recs = self._hub_init_today(gid)
         daily = self._cfg["hub_daily"]
-        # 仅统计 draw/mutual 来源，force/propose 不计入每日抽取次数
-        user_recs = [r for r in today_recs
+        # 预检查：用 _hub_today 只读快照，避免锁外调用 _hub_init_today 导致引用悬空
+        pre_recs = self._hub_today(gid)
+        user_recs = [r for r in pre_recs
                      if r["user_id"] == uid and r.get("source") in ("draw", "mutual")]
 
         if len(user_recs) >= daily:
@@ -1032,6 +1032,8 @@ class RepeatPlusPlugin(Star):
         avatar_url = f"https://q4.qlogo.cn/headimg_dl?dst_uin={husband_id}&spec=640"
 
         async with self.lock:
+            # 在锁内获取 today_recs，确保引用不被 _sync_config 替换导致写入丢失
+            today_recs = self._hub_init_today(gid)
             # double-check：防止并发抽取超过每日限制
             user_recs = [r for r in today_recs
                          if r["user_id"] == uid and r.get("source") in ("draw", "mutual")]
@@ -1151,7 +1153,6 @@ class RepeatPlusPlugin(Star):
 
         force_daily = self._cfg.get("hub_force_daily", 1)
         force_cd = self._cfg["hub_force_cd"]
-        today_recs = self._hub_init_today(gid)
         now = time.time()
 
         bot_id = str(getattr(event.message_obj, 'self_id', ''))
@@ -1167,6 +1168,8 @@ class RepeatPlusPlugin(Star):
         avatar_url = f"https://q4.qlogo.cn/headimg_dl?dst_uin={target_id}&spec=640"
 
         async with self.lock:
+            # 在锁内获取 today_recs，确保引用不被 _sync_config 替换导致写入丢失
+            today_recs = self._hub_init_today(gid)
             # double-check：防止并发强娶超过每日限制 + CD 绕过
             lock_msg = None
             last_force2 = self._hub_force_cd.get(uid, 0)
@@ -2089,7 +2092,7 @@ class RepeatPlusPlugin(Star):
         else:
             hub_section = "💕 抽老公/老婆功能未开启，请在管理面板中启用。\n"
         await event.send(event.plain_result(
-            f"\U0001F4DF 复读插件 v1.2.6 指令帮助\n{'─'*30}\n"
+            f"\U0001F4DF 复读插件 v1.2.7 指令帮助\n{'─'*30}\n"
             f"🔧 管理（仅群聊）\n"
             "  /复读开启          在本群开启复读\n"
             "  /复读关闭          在本群关闭复读\n"
@@ -2098,7 +2101,7 @@ class RepeatPlusPlugin(Star):
             f"{'─'*30}\n"
             f"🏆 排行榜（仅群聊）\n{rl}\n{'─'*30}\n{hub_section}"
             f"{'─'*30}\n"
-            f"🔥 v1.2.6 正式版：并发安全修复 / 活跃追踪 / 连线发光\n"
+            f"🔥 v1.2.7 正式版：抽取数据完整性 / 并发安全 / 连线发光\n"
             f"⚙️ 更多参数请在 WebUI 管理面板调整"))
 
     # ============================================================
