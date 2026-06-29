@@ -924,8 +924,8 @@ class RepeatPlusPlugin(Star):
 
     def _hub_rbq_incr(self, gid: str, target_id: str) -> None:
         """排行榜计数 +1（force/propose 共用）— 调用方必须在锁内"""
-        self._hub_rbq.setdefault(gid, {})[target_id] = \
-            self._hub_rbq[gid].get(target_id, 0) + 1
+        inner = self._hub_rbq.setdefault(gid, {})
+        inner[target_id] = inner.get(target_id, 0) + 1
 
     def _hub_active_pool(self, gid: str, uid: str, bid: str) -> List[str]:
         active = self._hub_active.get(gid, {})
@@ -1861,35 +1861,38 @@ class RepeatPlusPlugin(Star):
             await e.send(e.plain_result("❌ 抽老公/老婆功能未开启，请在管理面板中启用。"))
             return
         uid = str(e.get_sender_id())
-        proposal = self._proposals.get(gid)
-        if not proposal or proposal["to"] != uid:
-            await e.send(e.plain_result("💍 你当前没有待处理的求婚请求。"))
-            return
-        if time.time() - proposal["ts"] > 300:
-            # 返还求婚次数和冷却
-            async with self.lock:
+
+        # 在锁内读取 proposal 并做原子操作，防止并发覆盖
+        async with self.lock:
+            proposal = self._proposals.get(gid)
+            if not proposal or proposal["to"] != uid:
+                await e.send(e.plain_result("💍 你当前没有待处理的求婚请求。"))
+                return
+            if time.time() - proposal["ts"] > 300:
                 from_uid = proposal["from"]
                 self._hub_propose_count[from_uid] = max(0, self._hub_propose_count.get(from_uid, 1) - 1)
                 self._hub_propose_cd.pop(from_uid, None)
-            self._proposals.pop(gid, None)
-            await e.send(e.plain_result("⏰ 求婚请求已过期（5分钟），请重新发起。\n💡 求婚次数已返还~"))
-            return
+                self._proposals.pop(gid, None)
+                await e.send(e.plain_result("⏰ 求婚请求已过期（5分钟），请重新发起。\n💡 求婚次数已返还~"))
+                return
 
-        propose_mode = "wife" if wife else "husband"
-        label = self._hb_label(propose_mode)
-        now = time.time()
-        async with self.lock:
+            propose_mode = "wife" if wife else "husband"
+            label = self._hb_label(propose_mode)
+            now = time.time()
             self._hub_init_today(gid).append({
                 "user_id": proposal["from"], "user_name": proposal["from_name"],
                 "husband_id": proposal["to"], "husband_name": proposal["to_name"],
                 "ts": now, "source": "propose",
             })
             self._hub_rbq_incr(gid, proposal["to"])
+            self._proposals.pop(gid, None)
+            # 保存 proposal 数据供锁外发送消息使用
+            from_name = proposal["from_name"]
+            to_name = proposal["to_name"]
 
         await e.send(e.plain_result(
-            f"💒 恭喜！{proposal['from_name']} 和 {proposal['to_name']} 喜结连理！\n"
-            f"从今天起，{proposal['to_name']} 就是 {proposal['from_name']} 的{label}了！🎉"))
-        self._proposals.pop(gid, None)
+            f"💒 恭喜！{from_name} 和 {to_name} 喜结连理！\n"
+            f"从今天起，{to_name} 就是 {from_name} 的{label}了！🎉"))
 
     async def _cmd_accept_proposal(self, event: AstrMessageEvent) -> None:
         await self.on_accept_proposal(event)
@@ -1899,17 +1902,20 @@ class RepeatPlusPlugin(Star):
         gid = self._gid(e)
         if not gid: await e.send(e.plain_result("⚠️ 此功能仅在群聊中可用。")); return
         uid = str(e.get_sender_id())
-        proposal = self._proposals.get(gid)
-        if not proposal or proposal["to"] != uid:
-            await e.send(e.plain_result("💍 你当前没有待处理的求婚请求。"))
-            return
-        # 返还求婚次数和冷却
+
         async with self.lock:
+            proposal = self._proposals.get(gid)
+            if not proposal or proposal["to"] != uid:
+                await e.send(e.plain_result("💍 你当前没有待处理的求婚请求。"))
+                return
+            # 返还求婚次数和冷却
             from_uid = proposal["from"]
             self._hub_propose_count[from_uid] = max(0, self._hub_propose_count.get(from_uid, 1) - 1)
             self._hub_propose_cd.pop(from_uid, None)
-        self._proposals.pop(gid, None)
-        await e.send(e.plain_result(f"💔 {proposal['from_name']} 的求婚被拒绝了...\n💡 求婚次数已返还，可以重新求婚~"))
+            self._proposals.pop(gid, None)
+            from_name = proposal["from_name"]
+
+        await e.send(e.plain_result(f"💔 {from_name} 的求婚被拒绝了...\n💡 求婚次数已返还，可以重新求婚~"))
 
     async def _cmd_reject_proposal(self, event: AstrMessageEvent) -> None:
         await self.on_reject_proposal(event)
