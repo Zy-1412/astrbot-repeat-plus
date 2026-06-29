@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""AstrBot 复读增强插件 v1.2.4 — 连线发光+加粗+加亮，长距离可见"""
+"""AstrBot 复读增强插件 v1.2.5 — 活跃追踪独立于复读白名单"""
 
 import random, logging, time, re, copy, asyncio, json, os, math, io
 from typing import Dict, List, Set, Optional, Tuple, Any
@@ -305,7 +305,7 @@ class RepeatPlusPlugin(Star):
         # 关键词路由表
         self._build_hub_keywords()
 
-        self._log(logging.INFO, "插件已加载 v1.2.4 (连线发光)")
+        self._log(logging.INFO, "插件已加载 v1.2.5 (活跃追踪修复)")
 
     # ============================================================
     # 数据持久化
@@ -2084,7 +2084,7 @@ class RepeatPlusPlugin(Star):
         else:
             hub_section = "💕 抽老公/老婆功能未开启，请在管理面板中启用。\n"
         await event.send(event.plain_result(
-            f"\U0001F4DF 复读插件 v1.2.4 指令帮助\n{'─'*30}\n"
+            f"\U0001F4DF 复读插件 v1.2.5 指令帮助\n{'─'*30}\n"
             f"🔧 管理（仅群聊）\n"
             "  /复读开启          在本群开启复读\n"
             "  /复读关闭          在本群关闭复读\n"
@@ -2093,7 +2093,7 @@ class RepeatPlusPlugin(Star):
             f"{'─'*30}\n"
             f"🏆 排行榜（仅群聊）\n{rl}\n{'─'*30}\n{hub_section}"
             f"{'─'*30}\n"
-            f"🔥 v1.2.4 正式版：连线发光加粗 / 二次方向心力 / 并发头像\n"
+            f"🔥 v1.2.5 正式版：活跃追踪独立 / 连线发光 / 并发头像\n"
             f"⚙️ 更多参数请在 WebUI 管理面板调整"))
 
     # ============================================================
@@ -2110,20 +2110,20 @@ class RepeatPlusPlugin(Star):
         await self._sync_config()
         cfg = self._cfg
 
-        # 群组白名单/黑名单检查
+        # 抽老公/老婆活跃追踪 — 独立于复读白名单/黑名单，只要发了消息就记录
+        async with self.lock:
+            self._hub_active.setdefault(gid, {})[sid] = {
+                "name": event.get_sender_name() or sid,
+                "ts": time.time(),
+            }
+
+        # 群组白名单/黑名单检查（仅影响复读功能）
         wl = cfg.get("whitelist_groups", set())
         bl = cfg.get("blacklist_groups", set())
         if wl and gid not in wl:
             return
         if bl and gid in bl:
             return
-
-        # 抽老公/老婆活跃追踪 — 加锁防止与 _sync_config 的 _hub_active 替换竞争
-        async with self.lock:
-            self._hub_active.setdefault(gid, {})[sid] = {
-                "name": event.get_sender_name() or sid,
-                "ts": time.time(),
-            }
 
         if gid in cfg["ignored_groups"] or sid in cfg["ignored_users"]: return
         if gid in self.disabled_groups: return

@@ -2,7 +2,7 @@ name: astrbot_plugin_repeat_plus
 display_name: QQ群复读增强插件
 desc: QQ 群复读增强插件，支持文本/图片/表情复读、模糊匹配、趣味打断、指令控制、排行榜、抽老公/老婆双模式、关系图、求婚系统、数据持久化，提供 9 组 40 项可视化后台配置。
 short_desc: QQ群复读增强插件，支持模糊匹配、打断、排行榜、抽老公/老婆双模式、关系图、求婚及可视化配置。
-version: v1.2.4
+version: v1.2.5
 author: AstrBot Community
 repo: https://github.com/Zy-1412/astrbot-repeat-plus
 astrbot_version: ">=4.0.0"
