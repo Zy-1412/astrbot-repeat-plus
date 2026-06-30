@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""AstrBot 复读增强插件 v1.3.2 — 极细线 / 方向交替 / 简洁面板"""
+"""AstrBot 复读增强插件 v1.3.3 — 引力优化：非线性冷却+内高光+点阵+更大节点"""
 
 import random, logging, time, re, copy, asyncio, json, os, math, io
 from typing import Dict, List, Set, Optional, Tuple, Any
@@ -305,7 +305,7 @@ class RepeatPlusPlugin(Star):
         # 关键词路由表
         self._build_hub_keywords()
 
-        self._log(logging.INFO, "插件已加载 v1.3.2 (面板简洁化)")
+        self._log(logging.INFO, "插件已加载 v1.3.3 (引力优化)")
 
     # ============================================================
     # 数据持久化
@@ -1421,24 +1421,24 @@ class RepeatPlusPlugin(Star):
         if n == 0:
             return
 
-        # 布局区域：左侧主图区 950px
+        # 布局区域：左侧主图区 950px，右侧面板
         chart_w = 950
         cx, cy = chart_w // 2, H // 2 + 10
 
         # 自适应节点大小：2~50+ 人分 6 档，人数越多节点越小
         max_deg = max(v["deg"] for v in nodes.values()) if nodes else 1
         if n <= 10:
-            r_min, r_range = 32, 20      # 32~52
+            r_min, r_range = 34, 22      # 34~56
         elif n <= 20:
-            r_min, r_range = 26, 16      # 26~42
+            r_min, r_range = 28, 18      # 28~46
         elif n <= 30:
-            r_min, r_range = 22, 12      # 22~34
+            r_min, r_range = 24, 14      # 24~38
         elif n <= 40:
-            r_min, r_range = 18, 10      # 18~28
+            r_min, r_range = 20, 12      # 20~32
         elif n <= 55:
-            r_min, r_range = 15, 8       # 15~23
+            r_min, r_range = 17, 10      # 17~27
         else:
-            r_min, r_range = 13, 7       # 13~20
+            r_min, r_range = 15, 8       # 15~23
         node_r: Dict[str, int] = {}
         for name, nd in nodes.items():
             d = nd["deg"]
@@ -1469,14 +1469,16 @@ class RepeatPlusPlugin(Star):
             positions[name] = (cx + init_r * math.cos(angle) + rng.uniform(-jitter, jitter),
                               cy + init_r * math.sin(angle) + rng.uniform(-jitter, jitter))
 
-        # 力导向参数自适应
-        k = math.sqrt(area / n) * 0.48  # 理想边长，略紧于标准 FR
-        temp_start = chart_w / 4.0
-        temp_end = max(chart_w / 500.0, chart_w / (n * 6.0))
-        iterations = max(200, min(400, n * 6))
-        center_gravity = 1.5 + n * 0.015  # 二次方向心力系数，50人≈2.25，23人≈1.85
+        # 力导向参数自适应 — 优化版：更多迭代 + 非线性冷却
+        k = math.sqrt(area / n) * 0.55  # 理想边长，比标准 FR 略宽
+        temp_start = chart_w / 3.0
+        temp_end = max(chart_w / 600.0, 0.5)
+        iterations = max(300, min(500, n * 8))
+        center_gravity = 1.2 + n * 0.012  # 二次方向心力
         for it in range(iterations):
-            temp = temp_start + (temp_end - temp_start) * (it / iterations)
+            # 非线性冷却：前期快退火，后期慢收敛
+            progress = it / iterations
+            temp = temp_start * (temp_end / temp_start) ** progress
             disp: Dict[str, Tuple[float, float]] = {name: (0.0, 0.0) for name in node_list}
             # 排斥力：所有节点对
             for i in range(n):
@@ -1565,23 +1567,21 @@ class RepeatPlusPlugin(Star):
             if not moved:
                 break
 
-        # 画网格背景
-        for gx in range(0, chart_w, 80):
-            draw.line([(gx, 0), (gx, H)], fill="#1f1f3a", width=1)
-        for gy in range(0, H, 80):
-            draw.line([(0, gy), (chart_w, gy)], fill="#1f1f3a", width=1)
+        # 画点阵背景（比网格线更干净）
+        dot_spacing = 60
+        for gx in range(dot_spacing, chart_w, dot_spacing):
+            for gy in range(dot_spacing, H, dot_spacing):
+                draw.ellipse([(gx - 1, gy - 1), (gx + 1, gy + 1)], fill="#1f1f3a")
 
         # 画连线 (贝塞尔曲线 — 极细线，无发光层，清晰可辨)
         seen_pairs: Set[Tuple[str, str]] = set()
-        # 方向交替偏移：避免相邻边曲线方向一致导致重叠
         curve_dir = 1
         for s_name, t_name, tp in edges:
             fx, fy = positions.get(s_name, (0, 0))
             tx, ty = positions.get(t_name, (0, 0))
 
-            # 主线颜色和宽度 — 极细，多人图不糊
             line_color = "#ff8787" if tp == "force" else "#5ef7f0"
-            w_line = 2.0 if tp == "force" else 1.5
+            w_line = 2.5 if tp == "force" else 2.0
 
             # 缩到节点边缘
             ddx, ddy = tx - fx, ty - fy
@@ -1592,25 +1592,22 @@ class RepeatPlusPlugin(Star):
             fx2, fy2 = fx + ux * sr, fy + uy * sr
             tx2, ty2 = tx - ux * tr, ty - uy * tr
 
-            # 贝塞尔控制点：方向交替 + 距离自适应，减少平行重叠
-            base_curve = 35 if tp == "force" else 25
-            curve_off = base_curve + dist * 0.05
+            # 贝塞尔控制点
+            base_curve = 40 if tp == "force" else 30
+            curve_off = base_curve + dist * 0.06
             perp_x, perp_y = -uy, ux
-            # 双向边：第二条反向边向相反方向弯曲
             pair = (s_name, t_name)
             rev_pair = (t_name, s_name)
             if rev_pair in seen_pairs:
                 curve_off = -curve_off
             else:
-                # 单边：方向交替，避免相邻边同向重叠
                 curve_off *= curve_dir
                 curve_dir *= -1
             seen_pairs.add(pair)
             cpx = (fx2 + tx2) / 2 + perp_x * curve_off
             cpy = (fy2 + ty2) / 2 + perp_y * curve_off
 
-            # 贝塞尔曲线点
-            steps = 30
+            steps = 40
             pts = []
             for k in range(steps + 1):
                 t = k / steps
@@ -1618,27 +1615,19 @@ class RepeatPlusPlugin(Star):
                 by = (1 - t) ** 2 * fy2 + 2 * (1 - t) * t * cpy + t ** 2 * ty2
                 pts.append((bx, by))
 
-            # 主线
             for k in range(len(pts) - 1):
                 draw.line([pts[k], pts[k + 1]], fill=line_color, width=int(w_line))
 
-            # 箭头（缩小，更精致）
+            # 箭头
             ex, ey = pts[-1]
             px, py = pts[-2]
             arrow_angle = math.atan2(ey - py, ex - px)
-            arrow = 10
-            ax = ex - arrow * math.cos(arrow_angle - 0.55)
-            ay = ey - arrow * math.sin(arrow_angle - 0.55)
-            bx = ex - arrow * math.cos(arrow_angle + 0.55)
-            by = ey - arrow * math.sin(arrow_angle + 0.55)
+            arrow = 11
+            ax = ex - arrow * math.cos(arrow_angle - 0.5)
+            ay = ey - arrow * math.sin(arrow_angle - 0.5)
+            bx = ex - arrow * math.cos(arrow_angle + 0.5)
+            by = ey - arrow * math.sin(arrow_angle + 0.5)
             draw.polygon([(ex, ey), (ax, ay), (bx, by)], fill=line_color)
-
-            # 边标签（更小字体，半透明色）
-            label = "强娶" if tp == "force" else "抽"
-            lbl_x = (fx2 + tx2) / 2 + perp_x * (curve_off * 0.7)
-            lbl_y = (fy2 + ty2) / 2 + perp_y * (curve_off * 0.7)
-            draw.text((lbl_x, lbl_y), label, fill="#888899", font=font_small,
-                      anchor="mm")
 
         # 并发下载头像（ThreadPoolExecutor，上限 16 线程）
         avatar_cache: Dict[str, Optional[PILImage.Image]] = {}
@@ -1661,23 +1650,29 @@ class RepeatPlusPlugin(Star):
 
             # 节点颜色
             if "drawer" in roles and "drawn" in roles:
-                node_color = "#9b59b6"  # 紫色：既是抽取者又是被抽者
+                node_color = "#9b59b6"
                 outline_color = "#c39bdb"
+                hl_color = "#c39bdb"
             elif "drawer" in roles:
-                node_color = "#3498db"  # 蓝色：仅抽取者
+                node_color = "#3498db"
                 outline_color = "#5dade2"
+                hl_color = "#85c1e9"
             else:
-                node_color = "#e74c3c"  # 红色：仅被抽者
+                node_color = "#e74c3c"
                 outline_color = "#f1948a"
-
-            # 光晕（细轮廓，清晰不厚重）
-            glow_r = r + 5
-            draw.ellipse([(px - glow_r, py - glow_r), (px + glow_r, py + glow_r)],
-                         fill=None, outline=outline_color, width=1)
+                hl_color = "#f5b7b1"
 
             # 主圆
             draw.ellipse([(px - r, py - r), (px + r, py + r)],
                          fill=node_color, outline=outline_color, width=2)
+
+            # 内高光：左上角亮斑，模拟立体感
+            hl_r = int(r * 0.5)
+            hl_ox = int(r * 0.25)
+            hl_oy = int(r * 0.25)
+            draw.ellipse([(px - hl_r - hl_ox, py - hl_r - hl_oy),
+                         (px + hl_r - hl_ox, py + hl_r - hl_oy)],
+                         fill=hl_color)
 
             # 头像
             avatar = avatar_cache.get(nd["id"])
@@ -1685,7 +1680,6 @@ class RepeatPlusPlugin(Star):
                 avatar_r = r - 8
                 av_size = avatar_r * 2
                 avatar_resized = avatar.resize((av_size, av_size), _LANCZOS)
-                # 圆形遮罩
                 mask = PILImage.new("L", (av_size, av_size), 0)
                 PILDraw.Draw(mask).ellipse([(0, 0), (av_size, av_size)], fill=255)
                 img.paste(avatar_resized, (int(px - avatar_r), int(py - avatar_r)), mask)
@@ -1694,23 +1688,18 @@ class RepeatPlusPlugin(Star):
             display = name if len(name) <= 8 else name[:8] + ".."
             bbox = draw.textbbox((0, 0), display, font=font_name)
             tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
-            # 文字背景
-            draw.rectangle([(px - tw / 2 - 4, py + r + 4),
-                           (px + tw / 2 + 4, py + r + 4 + th + 4)],
-                           fill="#0d0d1a")
-            draw.text((px - tw / 2, py + r + 6), display, fill="#eeeeee", font=font_name)
+            draw.text((px - tw / 2, py + r + 6), display, fill="#cccccc", font=font_name)
 
         # 右侧统计面板 — 简洁版，主图优先
-        panel_x = chart_w + 20
-        panel_w = W - panel_x - 20
-        # 面板背景
-        draw.rectangle([(panel_x - 10, 50), (panel_x + panel_w, H - 50)],
-                       fill="#0d0d1a", outline="#2a2a4a", width=2)
+        panel_x = chart_w + 18
+        panel_w = W - panel_x - 18
+        draw.rectangle([(panel_x - 8, 48), (panel_x + panel_w, H - 48)],
+                       fill="#0d0d1a", outline="#1f1f3a", width=1)
 
-        draw.text((panel_x + panel_w // 2, 70), f"{title}羁绊统计",
-                  fill="#eeeeee", font=font_stat_bold, anchor="mt")
+        draw.text((panel_x + panel_w // 2, 68), f"{title}羁绊统计",
+                  fill="#ffffff", font=font_stat_bold, anchor="mt")
 
-        y = 110
+        y = 106
         draw_count = sum(1 for e in edges if e[2] in ("draw", "mutual", "propose"))
         force_count = sum(1 for e in edges if e[2] == "force")
         drawer_count = sum(1 for v in nodes.values() if "drawer" in v["role"])
@@ -1729,50 +1718,47 @@ class RepeatPlusPlugin(Star):
         ]
 
         for label, value in stats:
-            draw.text((panel_x + 15, y), label, fill="#8888aa", font=font_stat)
-            draw.text((panel_x + panel_w - 15, y), value, fill="#eeeeee",
+            draw.text((panel_x + 12, y), label, fill="#8888aa", font=font_small)
+            draw.text((panel_x + panel_w - 12, y), value, fill="#eeeeee",
                       font=font_stat, anchor="ra")
-            y += 28
+            y += 26
 
-        # 分隔线
         y += 8
-        draw.line([(panel_x + 10, y), (panel_x + panel_w - 10, y)],
-                  fill="#2a2a4a", width=1)
+        draw.line([(panel_x + 8, y), (panel_x + panel_w - 8, y)],
+                  fill="#1f1f3a", width=1)
         y += 16
 
-        # 热门榜
-        draw.text((panel_x + panel_w // 2, y), "* 热门人物",
+        draw.text((panel_x + panel_w // 2, y), "热门人物",
                   fill="#f39c12", font=font_stat_bold, anchor="mt")
-        y += 28
+        y += 26
 
         top_nodes = sorted(node_list, key=lambda x: nodes[x].get("deg", 0), reverse=True)[:8]
         for i, name in enumerate(top_nodes):
             d = nodes[name].get("deg", 0)
             medal = ["[1]", "[2]", "[3]"][i] if i < 3 else f"[{i+1}]"
             display_name = name if len(name) <= 8 else name[:8] + ".."
-            draw.text((panel_x + 15, y), f"{medal} {display_name}",
+            draw.text((panel_x + 12, y), f"{medal} {display_name}",
                       fill="#eeeeee", font=font_small)
-            draw.text((panel_x + panel_w - 15, y), f"{d}条",
+            draw.text((panel_x + panel_w - 12, y), f"{d}条",
                       fill="#aaaaaa", font=font_small, anchor="ra")
             y += 22
 
-        # 图例
         y += 12
-        draw.line([(panel_x + 10, y), (panel_x + panel_w - 10, y)],
-                  fill="#2a2a4a", width=1)
+        draw.line([(panel_x + 8, y), (panel_x + panel_w - 8, y)],
+                  fill="#1f1f3a", width=1)
         y += 14
         draw.text((panel_x + panel_w // 2, y), "图例", fill="#8888aa",
                   font=font_small, anchor="mt")
-        y += 22
+        y += 20
         legends = [
             ("#3498db", "抽取者"), ("#e74c3c", "被抽者"),
             ("#9b59b6", "双向"), ("#5ef7f0", "抽取边"),
             ("#ff8787", "强娶边"),
         ]
         for color, label in legends:
-            draw.ellipse([(panel_x + 15, y + 2), (panel_x + 25, y + 12)],
+            draw.ellipse([(panel_x + 12, y + 2), (panel_x + 22, y + 12)],
                          fill=color)
-            draw.text((panel_x + 32, y + 2), label, fill="#cccccc",
+            draw.text((panel_x + 28, y + 2), label, fill="#cccccc",
                       font=font_small)
             y += 20
 
@@ -2092,7 +2078,7 @@ class RepeatPlusPlugin(Star):
         else:
             hub_section = "💕 抽老公/老婆功能未开启，请在管理面板中启用。\n"
         await event.send(event.plain_result(
-            f"\U0001F4DF 复读插件 v1.3.2 指令帮助\n{'─'*30}\n"
+            f"\U0001F4DF 复读插件 v1.3.3 指令帮助\n{'─'*30}\n"
             f"🔧 管理（仅群聊）\n"
             "  /复读开启          在本群开启复读\n"
             "  /复读关闭          在本群关闭复读\n"
@@ -2101,7 +2087,7 @@ class RepeatPlusPlugin(Star):
             f"{'─'*30}\n"
             f"🏆 排行榜（仅群聊）\n{rl}\n{'─'*30}\n{hub_section}"
             f"{'─'*30}\n"
-            f"🔥 v1.3.2 正式版：极细线 / 方向交替 / 简洁面板\n"
+            f"🔥 v1.3.3 正式版：非线性冷却 / 内高光 / 点阵 / 更大节点\n"
             f"⚙️ 更多参数请在 WebUI 管理面板调整"))
 
     # ============================================================
