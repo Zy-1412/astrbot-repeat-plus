@@ -1,15 +1,13 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""AstrBot 复读增强插件 v1.3.3 — 引力优化：非线性冷却+内高光+点阵+更大节点"""
+"""AstrBot 复读增强插件 v2.0.0 — Vis.js 关系图渲染：基于 wifepicker 的 HTML 图谱方案"""
 
-import random, logging, time, re, copy, asyncio, json, os, math, io
+import random, logging, time, re, copy, asyncio, json, os
 from typing import Dict, List, Set, Optional, Tuple, Any
 from collections import deque
 from difflib import SequenceMatcher
 from abc import ABC, abstractmethod
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta
-import urllib.request as urllib_req
 
 from astrbot.api.event import filter, AstrMessageEvent
 from astrbot.api.star import Context, Star
@@ -241,6 +239,7 @@ class RepeatPlusPlugin(Star):
     def __init__(self, context: Context, config: AstrBotConfig):
         super().__init__(context)
         self.config = config
+        self.curr_dir = os.path.dirname(os.path.abspath(__file__))
 
         # 运行状态
         self.group_history: Dict[str, deque] = {}
@@ -1315,7 +1314,7 @@ class RepeatPlusPlugin(Star):
             f"\n>> 快捷切换：/不限制成员抽取\n>> 永久设置：WebUI 管理面板"))
 
     # ============================================================
-    # 关系图
+    # 关系图 (Vis.js HTML 渲染，基于 wifepicker 方案)
     # ============================================================
     async def _cmd_relation_graph(self, event: AstrMessageEvent) -> None:
         gid = self._gid(event)
@@ -1331,445 +1330,97 @@ class RepeatPlusPlugin(Star):
             await event.send(event.plain_result("\U0001F4CA 今日暂无羁绊记录，无法生成关系图。"))
             return
 
-        png_path = os.path.join(self._data_dir, f"relation_{gid}_today.png")
-        try:
-            self._draw_relation_png(gid, recs, png_path, "今日")
-            await event.send(event.chain_result([
-                Plain(f"\U0001F4CA 今日羁绊关系图\n共 {len(recs)} 条羁绊记录\n"),
-                Image.fromFileSystem(png_path),
-            ]))
-        except Exception as e:
-            self._log(logging.ERROR, f"生成关系图失败: {e}")
-            await event.send(event.plain_result(
-                f"\U0001F4CA 今日羁绊关系图生成失败，请检查日志。"))
-
-    def _download_avatar(self, uid: str):  # -> Optional[PILImage.Image] (延迟加载)
-        """下载 QQ 头像，返回圆形裁剪的 PIL Image，失败返回 None"""
-        try:
-            from PIL import Image as PILImage, ImageDraw as PILDraw
-            _RESAMPLE = getattr(PILImage, "Resampling", None)
-            _LANCZOS = getattr(_RESAMPLE, "LANCZOS", None) if _RESAMPLE else None
-            if _LANCZOS is None:
-                _LANCZOS = getattr(PILImage, "LANCZOS", PILImage.NEAREST)
-        except ImportError:
-            return None
-        url = f"https://q4.qlogo.cn/headimg_dl?dst_uin={uid}&spec=640"
-        try:
-            req = urllib_req.Request(url, headers={"User-Agent": "Mozilla/5.0"})
-            with urllib_req.urlopen(req, timeout=3) as resp:
-                data = resp.read()
-            img = PILImage.open(io.BytesIO(data)).convert("RGB")
-            # 圆形裁剪
-            size = min(img.size)
-            img = img.crop(((img.size[0] - size) // 2, (img.size[1] - size) // 2,
-                            (img.size[0] + size) // 2, (img.size[1] + size) // 2))
-            img = img.resize((120, 120), _LANCZOS)
-            mask = PILImage.new("L", (120, 120), 0)
-            PILDraw.Draw(mask).ellipse([(0, 0), (120, 120)], fill=255)
-            img.putalpha(mask)
-            return img
-        except Exception as e:
-            self._dbg(f"下载头像失败 (uid={uid}): {e}")
-            return None
-
-    def _draw_relation_png(self, gid: str, recs: List[Dict[str, Any]],
-                           path: str, title: str = "今日") -> None:
-        try:
-            from PIL import Image as PILImage, ImageDraw as PILDraw, ImageFont as PILFont
-            _RESAMPLE = getattr(PILImage, "Resampling", None)
-            _LANCZOS = getattr(_RESAMPLE, "LANCZOS", None) if _RESAMPLE else None
-            if _LANCZOS is None:
-                _LANCZOS = getattr(PILImage, "LANCZOS", PILImage.NEAREST)
-        except ImportError:
-            raise RuntimeError("PIL/Pillow 未安装，无法生成关系图。请执行: pip install Pillow")
-
-        W, H = 1200, 800
-        IMG_BG = "#1a1a2e"
-        img = PILImage.new("RGB", (W, H), IMG_BG)
-        draw = PILDraw.Draw(img)
-
-        # 字体
-        try:
-            font_name = PILFont.truetype("/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc", 14)
-            font_title = PILFont.truetype("/usr/share/fonts/truetype/noto/NotoSansCJK-Bold.ttc", 22)
-            font_small = PILFont.truetype("/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc", 11)
-            font_stat = PILFont.truetype("/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc", 13)
-            font_stat_bold = PILFont.truetype("/usr/share/fonts/truetype/noto/NotoSansCJK-Bold.ttc", 16)
-        except Exception:
-            font_name = font_title = font_small = font_stat = font_stat_bold = PILFont.load_default()
-            self._log(logging.WARNING, "关系图：Noto Sans CJK 字体未找到，中文将无法正常渲染，请安装 fonts-noto-cjk")
-
-        # 构建节点集 + 度数统计
-        nodes: Dict[str, Dict[str, Any]] = {}
-        for r in recs:
-            un = r["user_name"]
-            hn = r["husband_name"]
-            nodes.setdefault(un, {"id": r["user_id"], "name": un, "deg": 0, "role": set()})
-            nodes.setdefault(hn, {"id": r["husband_id"], "name": hn, "deg": 0, "role": set()})
-            nodes[un]["role"].add("drawer")
-            nodes[hn]["role"].add("drawn")
-            nodes[un]["deg"] = nodes[un].get("deg", 0) + 1
-            nodes[hn]["deg"] = nodes[hn].get("deg", 0) + 1
-
-        # 边列表
-        edges: List[Tuple[str, str, str]] = []
-        for r in recs:
-            edges.append((r["user_name"], r["husband_name"], r.get("source", "draw")))
-
-        node_list = list(nodes.keys())
-        n = len(node_list)
-        if n == 0:
+        # 读取 Vis.js 和模板
+        vis_js = os.path.join(self.curr_dir, "vis-network.min.js")
+        tpl = os.path.join(self.curr_dir, "template", "relation_graph.html")
+        if not os.path.exists(vis_js) or not os.path.exists(tpl):
+            await event.send(event.plain_result("❌ 关系图模板文件缺失，请重新安装插件。"))
             return
+        with open(vis_js, "r", encoding="utf-8") as f:
+            vis_js_content = f.read()
+        with open(tpl, "r", encoding="utf-8") as f:
+            html = f.read()
 
-        # 布局区域：左侧主图区 950px，右侧面板
-        chart_w = 950
-        cx, cy = chart_w // 2, H // 2 + 10
+        # 构建 data 记录
+        records = []
+        node_roles: Dict[str, Set[str]] = {}
+        for r in recs:
+            records.append({
+                "user_id": r["user_id"],
+                "user_name": r.get("user_name", f"用户({r['user_id']})"),
+                "husband_id": r["husband_id"],
+                "husband_name": r.get("husband_name", f"用户({r['husband_id']})"),
+                "source": r.get("source", "draw"),
+            })
+            uid, hid = r["user_id"], r["husband_id"]
+            if uid not in node_roles: node_roles[uid] = set()
+            if hid not in node_roles: node_roles[hid] = set()
+            node_roles[uid].add("drawer")
+            node_roles[hid].add("drawn")
 
-        # 自适应节点大小：2~50+ 人分 6 档，人数越多节点越小
-        max_deg = max(v["deg"] for v in nodes.values()) if nodes else 1
-        if n <= 10:
-            r_min, r_range = 34, 22      # 34~56
-        elif n <= 20:
-            r_min, r_range = 28, 18      # 28~46
-        elif n <= 30:
-            r_min, r_range = 24, 14      # 24~38
-        elif n <= 40:
-            r_min, r_range = 20, 12      # 20~32
-        elif n <= 55:
-            r_min, r_range = 17, 10      # 17~27
-        else:
-            r_min, r_range = 15, 8       # 15~23
-        node_r: Dict[str, int] = {}
-        for name, nd in nodes.items():
-            d = nd["deg"]
-            node_r[name] = int(r_min + (d / max_deg) * r_range) if max_deg > 0 else r_min + r_range // 2
-
-        # ── 力导向布局（Fruchterman-Reingold）：圆形初始化 + 向心力 + 温控退火 ──
-        # 构建邻接表
-        adj: Dict[str, Set[str]] = {name: set() for name in node_list}
-        for s_name, t_name, _ in edges:
-            adj[s_name].add(t_name)
-            adj[t_name].add(s_name)
-
-        positions: Dict[str, Tuple[float, float]] = {}
-        margin = 30
-        area = chart_w * H
-
-        # 自适应初始化半径：保证初始圆环上节点间距 ≥ 平均直径，但不超过画布 35%
-        avg_node_r = sum(node_r.values()) / n
-        need_circ = n * (avg_node_r * 2 + 8)  # 所需最小周长
-        init_r = max(need_circ / (2 * math.pi), min(chart_w, H) * 0.18)
-        # 上限收紧：不要一开始就把节点放到画布边缘
-        init_r = min(init_r, min(chart_w, H) * 0.28)
-        rng = random.Random(int(time.time() * 1000) % 1000000)
-        # 扰动幅度随人数自适应
-        jitter = max(3, min(15, int(240 / math.sqrt(n))))
-        for i, name in enumerate(node_list):
-            angle = (2 * math.pi * i) / n - math.pi / 2
-            positions[name] = (cx + init_r * math.cos(angle) + rng.uniform(-jitter, jitter),
-                              cy + init_r * math.sin(angle) + rng.uniform(-jitter, jitter))
-
-        # 力导向参数自适应 — 优化版：更多迭代 + 非线性冷却
-        k = math.sqrt(area / n) * 0.55  # 理想边长，比标准 FR 略宽
-        temp_start = chart_w / 3.0
-        temp_end = max(chart_w / 600.0, 0.5)
-        iterations = max(300, min(500, n * 8))
-        center_gravity = 1.2 + n * 0.012  # 二次方向心力
-        for it in range(iterations):
-            # 非线性冷却：前期快退火，后期慢收敛
-            progress = it / iterations
-            temp = temp_start * (temp_end / temp_start) ** progress
-            disp: Dict[str, Tuple[float, float]] = {name: (0.0, 0.0) for name in node_list}
-            # 排斥力：所有节点对
-            for i in range(n):
-                for j in range(i + 1, n):
-                    a, b = node_list[i], node_list[j]
-                    dx = positions[a][0] - positions[b][0]
-                    dy = positions[a][1] - positions[b][1]
-                    dist = math.hypot(dx, dy)
-                    if dist < 1.0:
-                        dist = 1.0
-                        dx, dy = rng.uniform(-1, 1), rng.uniform(-1, 1)
-                    force = (k * k) / dist
-                    fx = (dx / dist) * force
-                    fy = (dy / dist) * force
-                    da, db = disp[a], disp[b]
-                    disp[a] = (da[0] + fx, da[1] + fy)
-                    disp[b] = (db[0] - fx, db[1] - fy)
-            # 吸引力：仅邻接节点
-            for a_name, b_name, _ in edges:
-                if a_name not in positions or b_name not in positions:
-                    continue
-                dx = positions[a_name][0] - positions[b_name][0]
-                dy = positions[a_name][1] - positions[b_name][1]
-                dist = math.hypot(dx, dy)
-                if dist < 1.0:
-                    dist = 1.0
-                force = (dist * dist) / k
-                fx = (dx / dist) * force
-                fy = (dy / dist) * force
-                da, db = disp[a_name], disp[b_name]
-                disp[a_name] = (da[0] - fx, da[1] - fy)
-                disp[b_name] = (db[0] + fx, db[1] + fy)
-            # 二次方向心力：靠近中心弱（自由扩散），靠近边缘急剧增强（防逃逸）
-            for name in node_list:
-                dx_c = cx - positions[name][0]
-                dy_c = cy - positions[name][1]
-                dist_c = math.hypot(dx_c, dy_c)
-                if dist_c > 1.0:
-                    # 力 = 方向 × (距离²/画布宽度) × 系数，边缘处力很强
-                    force_c = (dist_c * dist_c / chart_w) * center_gravity
-                    d_c = disp[name]
-                    disp[name] = (d_c[0] + (dx_c / dist_c) * force_c,
-                                  d_c[1] + (dy_c / dist_c) * force_c)
-            # 应用位移 + 温控限制 + 边界钳制
-            for name in node_list:
-                d = disp[name]
-                d_len = math.hypot(d[0], d[1])
-                if d_len > temp:
-                    scale = temp / d_len
-                    d = (d[0] * scale, d[1] * scale)
-                new_x = positions[name][0] + d[0]
-                new_y = positions[name][1] + d[1]
-                r = node_r[name] + 6
-                new_x = max(margin + r, min(chart_w - margin - r, new_x))
-                new_y = max(margin + r, min(H - margin - r, new_y))
-                positions[name] = (new_x, new_y)
-
-        # 碰撞消解：最终保证零重叠
-        min_gap = 10
-        max_iter = max(15, min(30, n // 2))
-        for _ in range(max_iter):
-            moved = False
-            for i in range(n):
-                for j in range(i + 1, n):
-                    a, b = node_list[i], node_list[j]
-                    dx = positions[a][0] - positions[b][0]
-                    dy = positions[a][1] - positions[b][1]
-                    dist = math.hypot(dx, dy) or 1.0
-                    needed = node_r[a] + node_r[b] + min_gap
-                    if dist < needed:
-                        overlap = (needed - dist) / 2
-                        fx = (dx / dist) * overlap
-                        fy = (dy / dist) * overlap
-                        new_ax = positions[a][0] + fx
-                        new_ay = positions[a][1] + fy
-                        new_bx = positions[b][0] - fx
-                        new_by = positions[b][1] - fy
-                        ra, rb = node_r[a] + 6, node_r[b] + 6
-                        new_ax = max(margin + ra, min(chart_w - margin - ra, new_ax))
-                        new_ay = max(margin + ra, min(H - margin - ra, new_ay))
-                        new_bx = max(margin + rb, min(chart_w - margin - rb, new_bx))
-                        new_by = max(margin + rb, min(H - margin - rb, new_by))
-                        positions[a] = (new_ax, new_ay)
-                        positions[b] = (new_bx, new_by)
-                        moved = True
-            if not moved:
-                break
-
-        # 画点阵背景（比网格线更干净）
-        dot_spacing = 60
-        for gx in range(dot_spacing, chart_w, dot_spacing):
-            for gy in range(dot_spacing, H, dot_spacing):
-                draw.ellipse([(gx - 1, gy - 1), (gx + 1, gy + 1)], fill="#1f1f3a")
-
-        # 画连线 (贝塞尔曲线 — 极细线，无发光层，清晰可辨)
-        seen_pairs: Set[Tuple[str, str]] = set()
-        curve_dir = 1
-        for s_name, t_name, tp in edges:
-            fx, fy = positions.get(s_name, (0, 0))
-            tx, ty = positions.get(t_name, (0, 0))
-
-            line_color = "#ff8787" if tp == "force" else "#5ef7f0"
-            w_line = 2.5 if tp == "force" else 2.0
-
-            # 缩到节点边缘
-            ddx, ddy = tx - fx, ty - fy
-            dist = math.hypot(ddx, ddy) or 1
-            ux, uy = ddx / dist, ddy / dist
-            sr = node_r.get(s_name, 30) + 5
-            tr = node_r.get(t_name, 30) + 5
-            fx2, fy2 = fx + ux * sr, fy + uy * sr
-            tx2, ty2 = tx - ux * tr, ty - uy * tr
-
-            # 贝塞尔控制点
-            base_curve = 40 if tp == "force" else 30
-            curve_off = base_curve + dist * 0.06
-            perp_x, perp_y = -uy, ux
-            pair = (s_name, t_name)
-            rev_pair = (t_name, s_name)
-            if rev_pair in seen_pairs:
-                curve_off = -curve_off
-            else:
-                curve_off *= curve_dir
-                curve_dir *= -1
-            seen_pairs.add(pair)
-            cpx = (fx2 + tx2) / 2 + perp_x * curve_off
-            cpy = (fy2 + ty2) / 2 + perp_y * curve_off
-
-            steps = 40
-            pts = []
-            for k in range(steps + 1):
-                t = k / steps
-                bx = (1 - t) ** 2 * fx2 + 2 * (1 - t) * t * cpx + t ** 2 * tx2
-                by = (1 - t) ** 2 * fy2 + 2 * (1 - t) * t * cpy + t ** 2 * ty2
-                pts.append((bx, by))
-
-            for k in range(len(pts) - 1):
-                draw.line([pts[k], pts[k + 1]], fill=line_color, width=int(w_line))
-
-            # 箭头
-            ex, ey = pts[-1]
-            px, py = pts[-2]
-            arrow_angle = math.atan2(ey - py, ex - px)
-            arrow = 11
-            ax = ex - arrow * math.cos(arrow_angle - 0.5)
-            ay = ey - arrow * math.sin(arrow_angle - 0.5)
-            bx = ex - arrow * math.cos(arrow_angle + 0.5)
-            by = ey - arrow * math.sin(arrow_angle + 0.5)
-            draw.polygon([(ex, ey), (ax, ay), (bx, by)], fill=line_color)
-
-        # 并发下载头像（ThreadPoolExecutor，上限 16 线程）
-        avatar_cache: Dict[str, Optional[PILImage.Image]] = {}
-        unique_uids = list(set(nd["id"] for nd in nodes.values()))
-        if unique_uids:
-            with ThreadPoolExecutor(max_workers=min(16, len(unique_uids))) as executor:
-                future_to_uid = {executor.submit(self._download_avatar, uid): uid for uid in unique_uids}
-                for future in as_completed(future_to_uid):
-                    uid = future_to_uid[future]
-                    try:
-                        avatar_cache[uid] = future.result()
-                    except Exception:
-                        avatar_cache[uid] = None
-
-        # 画节点
-        for name, nd in nodes.items():
-            px, py = positions[name]
-            r = node_r[name]
-            roles = nd.get("role", set())
-
-            # 节点颜色
+        role_map: Dict[str, str] = {}
+        for uid, roles in node_roles.items():
             if "drawer" in roles and "drawn" in roles:
-                node_color = "#9b59b6"
-                outline_color = "#c39bdb"
-                hl_color = "#c39bdb"
+                role_map[uid] = "both"
             elif "drawer" in roles:
-                node_color = "#3498db"
-                outline_color = "#5dade2"
-                hl_color = "#85c1e9"
+                role_map[uid] = "drawer"
             else:
-                node_color = "#e74c3c"
-                outline_color = "#f1948a"
-                hl_color = "#f5b7b1"
+                role_map[uid] = "drawn"
 
-            # 主圆
-            draw.ellipse([(px - r, py - r), (px + r, py + r)],
-                         fill=node_color, outline=outline_color, width=2)
+        draw_count = sum(1 for r in recs if r.get("source") in ("draw", "mutual", "propose"))
+        force_count = sum(1 for r in recs if r.get("source") == "force")
+        node_count = len(role_map)
 
-            # 内高光：左上角亮斑，模拟立体感
-            hl_r = int(r * 0.5)
-            hl_ox = int(r * 0.25)
-            hl_oy = int(r * 0.25)
-            draw.ellipse([(px - hl_r - hl_ox, py - hl_r - hl_oy),
-                         (px + hl_r - hl_ox, py + hl_r - hl_oy)],
-                         fill=hl_color)
+        # 获取群名和成员名映射
+        group_name = "未命名群聊"
+        user_map: Dict[str, str] = {}
+        try:
+            if event.get_platform_name() == "aiocqhttp":
+                info = await event.bot.api.call_action("get_group_info", group_id=int(gid))
+                if isinstance(info, dict):
+                    info = info.get("data", info)
+                group_name = info.get("group_name", group_name)
+                members = await event.bot.api.call_action("get_group_member_list", group_id=int(gid))
+                if isinstance(members, dict):
+                    members = members.get("data", members)
+                if isinstance(members, list):
+                    for m in members:
+                        mid = str(m.get("user_id"))
+                        user_map[mid] = m.get("card") or m.get("nickname") or mid
+        except Exception:
+            pass
 
-            # 头像
-            avatar = avatar_cache.get(nd["id"])
-            if avatar is not None:
-                avatar_r = r - 8
-                av_size = avatar_r * 2
-                avatar_resized = avatar.resize((av_size, av_size), _LANCZOS)
-                mask = PILImage.new("L", (av_size, av_size), 0)
-                PILDraw.Draw(mask).ellipse([(0, 0), (av_size, av_size)], fill=255)
-                img.paste(avatar_resized, (int(px - avatar_r), int(py - avatar_r)), mask)
+        title = f"{group_name} 羁绊关系图"
+        iter_count = self._cfg.get("hub_iterations", 140)
 
-            # 文字（在节点下方）
-            display = name if len(name) <= 8 else name[:8] + ".."
-            bbox = draw.textbbox((0, 0), display, font=font_name)
-            tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
-            draw.text((px - tw / 2, py + r + 6), display, fill="#cccccc", font=font_name)
-
-        # 右侧统计面板 — 简洁版，主图优先
-        panel_x = chart_w + 18
-        panel_w = W - panel_x - 18
-        draw.rectangle([(panel_x - 8, 48), (panel_x + panel_w, H - 48)],
-                       fill="#0d0d1a", outline="#1f1f3a", width=1)
-
-        draw.text((panel_x + panel_w // 2, 68), f"{title}羁绊统计",
-                  fill="#ffffff", font=font_stat_bold, anchor="mt")
-
-        y = 106
-        draw_count = sum(1 for e in edges if e[2] in ("draw", "mutual", "propose"))
-        force_count = sum(1 for e in edges if e[2] == "force")
-        drawer_count = sum(1 for v in nodes.values() if "drawer" in v["role"])
-        drawn_count = sum(1 for v in nodes.values() if "drawn" in v["role"])
-        both_count = sum(1 for v in nodes.values()
-                        if "drawer" in v["role"] and "drawn" in v["role"])
-
-        stats = [
-            ("总人数", f"{n} 人"),
-            ("总羁绊", f"{len(edges)} 条"),
-            ("抽取", f"{draw_count} 条"),
-            ("强娶", f"{force_count} 条"),
-            ("抽取者", f"{drawer_count} 人"),
-            ("被抽者", f"{drawn_count} 人"),
-            ("双向", f"{both_count} 人"),
-        ]
-
-        for label, value in stats:
-            draw.text((panel_x + 12, y), label, fill="#8888aa", font=font_small)
-            draw.text((panel_x + panel_w - 12, y), value, fill="#eeeeee",
-                      font=font_stat, anchor="ra")
-            y += 26
-
-        y += 8
-        draw.line([(panel_x + 8, y), (panel_x + panel_w - 8, y)],
-                  fill="#1f1f3a", width=1)
-        y += 16
-
-        draw.text((panel_x + panel_w // 2, y), "热门人物",
-                  fill="#f39c12", font=font_stat_bold, anchor="mt")
-        y += 26
-
-        top_nodes = sorted(node_list, key=lambda x: nodes[x].get("deg", 0), reverse=True)[:8]
-        for i, name in enumerate(top_nodes):
-            d = nodes[name].get("deg", 0)
-            medal = ["[1]", "[2]", "[3]"][i] if i < 3 else f"[{i+1}]"
-            display_name = name if len(name) <= 8 else name[:8] + ".."
-            draw.text((panel_x + 12, y), f"{medal} {display_name}",
-                      fill="#eeeeee", font=font_small)
-            draw.text((panel_x + panel_w - 12, y), f"{d}条",
-                      fill="#aaaaaa", font=font_small, anchor="ra")
-            y += 22
-
-        y += 12
-        draw.line([(panel_x + 8, y), (panel_x + panel_w - 8, y)],
-                  fill="#1f1f3a", width=1)
-        y += 14
-        draw.text((panel_x + panel_w // 2, y), "图例", fill="#8888aa",
-                  font=font_small, anchor="mt")
-        y += 20
-        legends = [
-            ("#3498db", "抽取者"), ("#e74c3c", "被抽者"),
-            ("#9b59b6", "双向"), ("#5ef7f0", "抽取边"),
-            ("#ff8787", "强娶边"),
-        ]
-        for color, label in legends:
-            draw.ellipse([(panel_x + 12, y + 2), (panel_x + 22, y + 12)],
-                         fill=color)
-            draw.text((panel_x + 28, y + 2), label, fill="#cccccc",
-                      font=font_small)
-            y += 20
-
-        # 主标题
-        draw.text((chart_w // 2, 22), f"{title}羁绊关系图",
-                  fill="#eeeeee", font=font_title, anchor="mt")
-        draw.text((chart_w // 2, 50),
-                  f"共 {n} 人 · {len(edges)} 条羁绊  |  节点大小 = 连接数",
-                  fill="#8888aa", font=font_small, anchor="mt")
-
-        img.save(path, "PNG")
+        try:
+            url = await self.html_render(
+                html,
+                {
+                    "vis_js_content": vis_js_content,
+                    "title": title,
+                    "records": records,
+                    "user_map": user_map,
+                    "node_roles": role_map,
+                    "node_count": node_count,
+                    "edge_count": len(recs),
+                    "draw_count": draw_count,
+                    "force_count": force_count,
+                    "iterations": iter_count,
+                },
+                options={
+                    "type": "png",
+                    "quality": None,
+                    "scale": "device",
+                    "clip": {"x": 0, "y": 0, "width": 1920, "height": 1080},
+                    "full_page": False,
+                    "device_scale_factor_level": "ultra",
+                },
+            )
+            await event.send(event.image_result(url))
+        except Exception as e:
+            self._log(logging.ERROR, f"关系图渲染失败: {e}")
+            await event.send(event.plain_result("❌ 关系图生成失败，请检查 Playwright 环境。"))
 
     # ============================================================
     # 求婚系统
