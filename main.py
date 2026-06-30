@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""AstrBot 复读增强插件 v2.0.0 — Vis.js 关系图渲染：基于 wifepicker 的 HTML 图谱方案"""
+"""AstrBot 复读增强插件 v2.0.2 — Vis.js 关系图渲染：适配自有数据模型 + 节点边界修复"""
 
 import random, logging, time, re, copy, asyncio, json, os
 from typing import Dict, List, Set, Optional, Tuple, Any
