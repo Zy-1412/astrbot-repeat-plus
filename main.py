@@ -1367,8 +1367,10 @@ class RepeatPlusPlugin(Star):
             else:
                 role_map[uid] = "drawn"
 
-        draw_count = sum(1 for r in recs if r.get("source") in ("draw", "mutual", "propose"))
+        draw_count = sum(1 for r in recs if r.get("source") == "draw")
         force_count = sum(1 for r in recs if r.get("source") == "force")
+        mutual_count = sum(1 for r in recs if r.get("source") == "mutual")
+        propose_count = sum(1 for r in recs if r.get("source") == "propose")
         node_count = len(role_map)
 
         # 获取群名和成员名映射
@@ -1406,6 +1408,8 @@ class RepeatPlusPlugin(Star):
                     "edge_count": len(recs),
                     "draw_count": draw_count,
                     "force_count": force_count,
+                    "mutual_count": mutual_count,
+                    "propose_count": propose_count,
                     "iterations": iter_count,
                 },
                 options={

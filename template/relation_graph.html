@@ -26,7 +26,7 @@
         .stats-bar {
             position: absolute; bottom: 0; left: 0; right: 0;
             height: 44px;
-            display: flex; align-items: center; justify-content: center; gap: 30px;
+            display: flex; align-items: center; justify-content: center; gap: 24px;
             color: #8888aa; font-size: 14px;
             background: linear-gradient(0deg, rgba(26,26,46,0.95), rgba(26,26,46,0));
             z-index: 10; pointer-events: none;
@@ -40,21 +40,27 @@
         }
         .legend-item { display: flex; align-items: center; gap: 8px; margin: 4px 0; color: #ccc; font-size: 13px; }
         .legend-item .dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; }
+        .legend-divider { border-top: 1px solid #333355; margin: 6px 0; }
     </style>
 </head>
 <body>
     <div class="title-bar">{{ title }}</div>
     <div class="stats-bar">
         <span>共 {{ node_count }} 人 · {{ edge_count }} 条羁绊</span>
-        <span><span class="dot" style="background:#5ef7f0"></span>抽取 {{ draw_count }}</span>
-        <span><span class="dot" style="background:#ff8787"></span>强娶 {{ force_count }}</span>
+        {% if draw_count > 0 %}<span><span class="dot" style="background:#5ef7f0"></span>抽取 {{ draw_count }}</span>{% endif %}
+        {% if force_count > 0 %}<span><span class="dot" style="background:#ff8787"></span>强娶 {{ force_count }}</span>{% endif %}
+        {% if mutual_count > 0 %}<span><span class="dot" style="background:#f0c060"></span>双向 {{ mutual_count }}</span>{% endif %}
+        {% if propose_count > 0 %}<span><span class="dot" style="background:#ff69b4"></span>求婚 {{ propose_count }}</span>{% endif %}
     </div>
     <div class="legend">
         <div class="legend-item"><span class="dot" style="background:#3498db"></span>抽取者</div>
         <div class="legend-item"><span class="dot" style="background:#e74c3c"></span>被抽者</div>
         <div class="legend-item"><span class="dot" style="background:#9b59b6"></span>双向</div>
-        <div class="legend-item"><span class="dot" style="background:#5ef7f0"></span>抽取边</div>
-        <div class="legend-item"><span class="dot" style="background:#ff8787"></span>强娶边</div>
+        <div class="legend-divider"></div>
+        <div class="legend-item"><span class="dot" style="background:#5ef7f0"></span>抽取羁绊</div>
+        <div class="legend-item"><span class="dot" style="background:#ff8787"></span>强娶羁绊</div>
+        <div class="legend-item"><span class="dot" style="background:#f0c060"></span>双向羁绊</div>
+        <div class="legend-item"><span class="dot" style="background:#ff69b4"></span>求婚羁绊</div>
     </div>
     <div id="network-container"></div>
     <script>
@@ -66,10 +72,18 @@
         const edges = [];
         const userSet = new Set();
 
+        // 边类型 → 颜色 & 标签映射
+        const EDGE_STYLES = {
+            "draw":    { label: "抽取", color: "#5ef7f0" },
+            "force":   { label: "强娶", color: "#ff8787" },
+            "mutual":  { label: "双向", color: "#f0c060" },
+            "propose": { label: "求婚", color: "#ff69b4" },
+        };
+
         raw_data.forEach(r => {
             const userName = user_map[r.user_id] || r.user_name || ("用户" + r.user_id);
-            const wifeName = user_map[r.husband_id] || r.husband_name || ("用户" + r.husband_id);
-            [{ id: r.user_id, name: userName }, { id: r.husband_id, name: wifeName }].forEach(u => {
+            const targetName = user_map[r.husband_id] || r.husband_name || ("用户" + r.husband_id);
+            [{ id: r.user_id, name: userName }, { id: r.husband_id, name: targetName }].forEach(u => {
                 if (!userSet.has(u.id)) {
                     userSet.add(u.id);
                     const role = node_roles[u.id] || "drawn";
@@ -95,16 +109,19 @@
                     });
                 }
             });
-            const isForce = r.source === "force";
+
+            const style = EDGE_STYLES[r.source] || EDGE_STYLES["draw"];
+            // 双向边使用反向曲线，与其他边形成视觉区分
+            const isMutual = r.source === "mutual";
             edges.push({
                 from: r.user_id,
                 to: r.husband_id,
-                label: isForce ? "强娶" : "抽",
+                label: style.label,
                 arrows: { to: { enabled: true, scaleFactor: 2, type: 'arrow' } },
-                color: { color: isForce ? '#ff8787' : '#5ef7f0', width: 3 },
+                color: { color: style.color, width: 3 },
                 font: { align: 'middle', color: '#888899', size: 20, background: '#1a1a2e88' },
                 length: 500,
-                smooth: { type: 'curvedCW', roundness: 0.2 }
+                smooth: { type: isMutual ? 'curvedCCW' : 'curvedCW', roundness: 0.2 }
             });
         });
 
