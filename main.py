@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""AstrBot 复读增强插件 v2.0.2 — Vis.js 关系图渲染：适配自有数据模型 + 节点边界修复"""
+"""AstrBot 复读增强插件 v2.0.3 — 关系图稳定性优化：并行API+重试+降配加速"""
 
 import random, logging, time, re, copy, asyncio, json, os
 from typing import Dict, List, Set, Optional, Tuple, Any
@@ -1330,6 +1330,9 @@ class RepeatPlusPlugin(Star):
             await event.send(event.plain_result("\U0001F4CA 今日暂无羁绊记录，无法生成关系图。"))
             return
 
+        # 发送提示，让用户知道正在处理
+        tip = await event.send(event.plain_result("🔍 正在生成关系图，请稍候..."))
+
         # 读取 Vis.js 和模板
         vis_js = os.path.join(self.curr_dir, "vis-network.min.js")
         tpl = os.path.join(self.curr_dir, "template", "relation_graph.html")
@@ -1373,58 +1376,80 @@ class RepeatPlusPlugin(Star):
         propose_count = sum(1 for r in recs if r.get("source") == "propose")
         node_count = len(role_map)
 
-        # 获取群名和成员名映射
+        # 并行获取群名和成员名映射
         group_name = "未命名群聊"
         user_map: Dict[str, str] = {}
         try:
             if event.get_platform_name() == "aiocqhttp":
-                info = await event.bot.api.call_action("get_group_info", group_id=int(gid))
-                if isinstance(info, dict):
-                    info = info.get("data", info)
-                group_name = info.get("group_name", group_name)
-                members = await event.bot.api.call_action("get_group_member_list", group_id=int(gid))
-                if isinstance(members, dict):
-                    members = members.get("data", members)
-                if isinstance(members, list):
-                    for m in members:
-                        mid = str(m.get("user_id"))
-                        user_map[mid] = m.get("card") or m.get("nickname") or mid
+                async def _fetch_group_info():
+                    info = await event.bot.api.call_action("get_group_info", group_id=int(gid))
+                    if isinstance(info, dict):
+                        info = info.get("data", info)
+                    return info.get("group_name", "未命名群聊")
+
+                async def _fetch_members():
+                    um: Dict[str, str] = {}
+                    members = await event.bot.api.call_action("get_group_member_list", group_id=int(gid))
+                    if isinstance(members, dict):
+                        members = members.get("data", members)
+                    if isinstance(members, list):
+                        for m in members:
+                            mid = str(m.get("user_id"))
+                            um[mid] = m.get("card") or m.get("nickname") or mid
+                    return um
+
+                group_name, user_map = await asyncio.gather(
+                    _fetch_group_info(), _fetch_members()
+                )
         except Exception:
             pass
 
         title = f"{group_name} 羁绊关系图"
-        iter_count = self._cfg.get("hub_iterations", 140)
+        iter_count = self._cfg.get("hub_iterations", 100)
 
-        try:
-            url = await self.html_render(
-                html,
-                {
-                    "vis_js_content": vis_js_content,
-                    "title": title,
-                    "records": records,
-                    "user_map": user_map,
-                    "node_roles": role_map,
-                    "node_count": node_count,
-                    "edge_count": len(recs),
-                    "draw_count": draw_count,
-                    "force_count": force_count,
-                    "mutual_count": mutual_count,
-                    "propose_count": propose_count,
-                    "iterations": iter_count,
-                },
-                options={
-                    "type": "png",
-                    "quality": None,
-                    "scale": "device",
-                    "clip": {"x": 0, "y": 0, "width": 1920, "height": 1080},
-                    "full_page": False,
-                    "device_scale_factor_level": "ultra",
-                },
-            )
-            await event.send(event.image_result(url))
-        except Exception as e:
-            self._log(logging.ERROR, f"关系图渲染失败: {e}")
-            await event.send(event.plain_result("❌ 关系图生成失败，请检查 Playwright 环境。"))
+        # 渲染：重试最多 2 次，降低 scale 加速
+        last_err = ""
+        for attempt in range(2):
+            try:
+                url = await self.html_render(
+                    html,
+                    {
+                        "vis_js_content": vis_js_content,
+                        "title": title,
+                        "records": records,
+                        "user_map": user_map,
+                        "node_roles": role_map,
+                        "node_count": node_count,
+                        "edge_count": len(recs),
+                        "draw_count": draw_count,
+                        "force_count": force_count,
+                        "mutual_count": mutual_count,
+                        "propose_count": propose_count,
+                        "iterations": iter_count,
+                    },
+                    options={
+                        "type": "png",
+                        "quality": None,
+                        "scale": "device",
+                        "clip": {"x": 0, "y": 0, "width": 1600, "height": 900},
+                        "full_page": False,
+                        "device_scale_factor_level": "high",
+                    },
+                )
+                await event.send(event.image_result(url))
+                return
+            except Exception as e:
+                last_err = str(e)
+                if attempt == 0:
+                    self._log(logging.WARNING, f"关系图第1次渲染失败，重试中: {last_err}")
+                    await asyncio.sleep(1)
+                else:
+                    self._log(logging.ERROR, f"关系图渲染失败(2次): {last_err}")
+
+        await event.send(event.plain_result(
+            f"❌ 关系图生成失败，请稍后重试。\n"
+            f"💡 如持续失败，请检查 Playwright 环境是否正常。"
+        ))
 
     # ============================================================
     # 求婚系统
