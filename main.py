@@ -305,7 +305,7 @@ class RepeatPlusPlugin(Star):
         # 关键词路由表
         self._build_hub_keywords()
 
-        self._log(logging.INFO, "插件已加载 v1.2.7 (抽取数据完整性修复)")
+        self._log(logging.INFO, "插件已加载 v1.3.0 (关系图精致化)")
 
     # ============================================================
     # 数据持久化
@@ -1571,35 +1571,40 @@ class RepeatPlusPlugin(Star):
         for gy in range(0, H, 80):
             draw.line([(0, gy), (chart_w, gy)], fill="#1f1f3a", width=1)
 
-        # 画连线 (贝塞尔曲线 + 发光层)
+        # 画连线 (贝塞尔曲线 — 极细线，无发光层，清晰可辨)
         seen_pairs: Set[Tuple[str, str]] = set()
+        # 方向交替偏移：避免相邻边曲线方向一致导致重叠
+        curve_dir = 1
         for s_name, t_name, tp in edges:
             fx, fy = positions.get(s_name, (0, 0))
             tx, ty = positions.get(t_name, (0, 0))
-            # 加亮颜色：对比度从 3.5:1 提升至 6:1+
-            glow_color = "#7fffd4" if tp == "force" else "#7fffd4"  # 发光层统一用亮青
-            line_color = "#ff8787" if tp == "force" else "#5ef7f0"  # 主线：亮红/亮青
-            w_line = 5 if tp == "force" else 3.5  # 主线宽度
-            w_glow = 9 if tp == "force" else 7  # 发光层宽度
+
+            # 主线颜色和宽度 — 极细，多人图不糊
+            line_color = "#ff8787" if tp == "force" else "#5ef7f0"
+            w_line = 2.0 if tp == "force" else 1.5
 
             # 缩到节点边缘
             ddx, ddy = tx - fx, ty - fy
             dist = math.hypot(ddx, ddy) or 1
             ux, uy = ddx / dist, ddy / dist
-            sr = node_r.get(s_name, 30) + 6
-            tr = node_r.get(t_name, 30) + 6
+            sr = node_r.get(s_name, 30) + 5
+            tr = node_r.get(t_name, 30) + 5
             fx2, fy2 = fx + ux * sr, fy + uy * sr
             tx2, ty2 = tx - ux * tr, ty - uy * tr
 
-            # 贝塞尔控制点：曲线偏移量随距离加大，长距离连线更弯曲
-            base_curve = 40 if tp == "force" else 30
-            curve_off = base_curve + dist * 0.06  # 距离越长弯曲越大
+            # 贝塞尔控制点：方向交替 + 距离自适应，减少平行重叠
+            base_curve = 35 if tp == "force" else 25
+            curve_off = base_curve + dist * 0.05
             perp_x, perp_y = -uy, ux
             # 双向边：第二条反向边向相反方向弯曲
             pair = (s_name, t_name)
             rev_pair = (t_name, s_name)
             if rev_pair in seen_pairs:
                 curve_off = -curve_off
+            else:
+                # 单边：方向交替，避免相邻边同向重叠
+                curve_off *= curve_dir
+                curve_dir *= -1
             seen_pairs.add(pair)
             cpx = (fx2 + tx2) / 2 + perp_x * curve_off
             cpy = (fy2 + ty2) / 2 + perp_y * curve_off
@@ -1613,30 +1618,26 @@ class RepeatPlusPlugin(Star):
                 by = (1 - t) ** 2 * fy2 + 2 * (1 - t) * t * cpy + t ** 2 * ty2
                 pts.append((bx, by))
 
-            # 发光层：先画粗的半透明底边
-            for k in range(len(pts) - 1):
-                draw.line([pts[k], pts[k + 1]], fill=glow_color, width=int(w_glow))
-            # 主线：画在发光层之上
+            # 主线
             for k in range(len(pts) - 1):
                 draw.line([pts[k], pts[k + 1]], fill=line_color, width=int(w_line))
 
-            # 箭头
+            # 箭头（缩小，更精致）
             ex, ey = pts[-1]
             px, py = pts[-2]
             arrow_angle = math.atan2(ey - py, ex - px)
-            arrow = 14
+            arrow = 10
             ax = ex - arrow * math.cos(arrow_angle - 0.55)
             ay = ey - arrow * math.sin(arrow_angle - 0.55)
             bx = ex - arrow * math.cos(arrow_angle + 0.55)
             by = ey - arrow * math.sin(arrow_angle + 0.55)
-            draw.polygon([(ex, ey), (ax, ay), (bx, by)], fill=glow_color)
             draw.polygon([(ex, ey), (ax, ay), (bx, by)], fill=line_color)
 
-            # 边标签
+            # 边标签（更小字体，半透明色）
             label = "强娶" if tp == "force" else "抽"
             lbl_x = (fx2 + tx2) / 2 + perp_x * (curve_off * 0.7)
             lbl_y = (fy2 + ty2) / 2 + perp_y * (curve_off * 0.7)
-            draw.text((lbl_x, lbl_y), label, fill=line_color, font=font_small,
+            draw.text((lbl_x, lbl_y), label, fill="#888899", font=font_small,
                       anchor="mm")
 
         # 并发下载头像（ThreadPoolExecutor，上限 16 线程）
@@ -1669,14 +1670,14 @@ class RepeatPlusPlugin(Star):
                 node_color = "#e74c3c"  # 红色：仅被抽者
                 outline_color = "#f1948a"
 
-            # 光晕
-            glow_r = r + 6
+            # 光晕（细轮廓，清晰不厚重）
+            glow_r = r + 5
             draw.ellipse([(px - glow_r, py - glow_r), (px + glow_r, py + glow_r)],
-                         fill=None, outline=outline_color, width=2)
+                         fill=None, outline=outline_color, width=1)
 
             # 主圆
             draw.ellipse([(px - r, py - r), (px + r, py + r)],
-                         fill=node_color, outline=outline_color, width=3)
+                         fill=node_color, outline=outline_color, width=2)
 
             # 头像
             avatar = avatar_cache.get(nd["id"])
@@ -2092,7 +2093,7 @@ class RepeatPlusPlugin(Star):
         else:
             hub_section = "💕 抽老公/老婆功能未开启，请在管理面板中启用。\n"
         await event.send(event.plain_result(
-            f"\U0001F4DF 复读插件 v1.2.7 指令帮助\n{'─'*30}\n"
+            f"\U0001F4DF 复读插件 v1.3.0 指令帮助\n{'─'*30}\n"
             f"🔧 管理（仅群聊）\n"
             "  /复读开启          在本群开启复读\n"
             "  /复读关闭          在本群关闭复读\n"
@@ -2101,7 +2102,7 @@ class RepeatPlusPlugin(Star):
             f"{'─'*30}\n"
             f"🏆 排行榜（仅群聊）\n{rl}\n{'─'*30}\n{hub_section}"
             f"{'─'*30}\n"
-            f"🔥 v1.2.7 正式版：抽取数据完整性 / 并发安全 / 连线发光\n"
+            f"🔥 v1.3.0 正式版：关系图精致化 / 极细线 / 方向交替曲线\n"
             f"⚙️ 更多参数请在 WebUI 管理面板调整"))
 
     # ============================================================
