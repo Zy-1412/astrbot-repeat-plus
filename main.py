@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""AstrBot 复读增强插件 v1.2.7 — 抽取功能数据完整性修复"""
+"""AstrBot 复读增强插件 v1.3.2 — 极细线 / 方向交替 / 简洁面板"""
 
 import random, logging, time, re, copy, asyncio, json, os, math, io
 from typing import Dict, List, Set, Optional, Tuple, Any
@@ -305,7 +305,7 @@ class RepeatPlusPlugin(Star):
         # 关键词路由表
         self._build_hub_keywords()
 
-        self._log(logging.INFO, "插件已加载 v1.3.1 (面板精致化)")
+        self._log(logging.INFO, "插件已加载 v1.3.2 (面板简洁化)")
 
     # ============================================================
     # 数据持久化
@@ -1393,14 +1393,10 @@ class RepeatPlusPlugin(Star):
             font_name = PILFont.truetype("/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc", 14)
             font_title = PILFont.truetype("/usr/share/fonts/truetype/noto/NotoSansCJK-Bold.ttc", 22)
             font_small = PILFont.truetype("/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc", 11)
-            font_stat = PILFont.truetype("/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc", 12)
+            font_stat = PILFont.truetype("/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc", 13)
             font_stat_bold = PILFont.truetype("/usr/share/fonts/truetype/noto/NotoSansCJK-Bold.ttc", 16)
-            font_kpi = PILFont.truetype("/usr/share/fonts/truetype/noto/NotoSansCJK-Bold.ttc", 28)
-            font_kpi_label = PILFont.truetype("/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc", 10)
-            font_rank = PILFont.truetype("/usr/share/fonts/truetype/noto/NotoSansCJK-Bold.ttc", 13)
-            font_subtitle = PILFont.truetype("/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc", 13)
         except Exception:
-            font_name = font_title = font_small = font_stat = font_stat_bold = font_kpi = font_kpi_label = font_rank = font_subtitle = PILFont.load_default()
+            font_name = font_title = font_small = font_stat = font_stat_bold = PILFont.load_default()
             self._log(logging.WARNING, "关系图：Noto Sans CJK 字体未找到，中文将无法正常渲染，请安装 fonts-noto-cjk")
 
         # 构建节点集 + 度数统计
@@ -1425,8 +1421,8 @@ class RepeatPlusPlugin(Star):
         if n == 0:
             return
 
-        # 布局区域：左侧主图区 920px，右侧面板 260px
-        chart_w = 920
+        # 布局区域：左侧主图区 950px
+        chart_w = 950
         cx, cy = chart_w // 2, H // 2 + 10
 
         # 自适应节点大小：2~50+ 人分 6 档，人数越多节点越小
@@ -1704,44 +1700,17 @@ class RepeatPlusPlugin(Star):
                            fill="#0d0d1a")
             draw.text((px - tw / 2, py + r + 6), display, fill="#eeeeee", font=font_name)
 
-        # 右侧统计面板 — 精致卡片风
-        panel_x = chart_w + 16
-        panel_w = W - panel_x - 16  # ≈ 264px
-        panel_rect = [(panel_x, 52), (panel_x + panel_w, H - 52)]
+        # 右侧统计面板 — 简洁版，主图优先
+        panel_x = chart_w + 20
+        panel_w = W - panel_x - 20
+        # 面板背景
+        draw.rectangle([(panel_x - 10, 50), (panel_x + panel_w, H - 50)],
+                       fill="#0d0d1a", outline="#2a2a4a", width=2)
 
-        # ── 面板背景：深色圆角卡片 ──
-        # PIL 无原生圆角矩形，用 canvas 四角像素圆角模拟
-        def _round_rect(draw_obj, xy, r, fill, outline=None, width=0):
-            x1, y1, x2, y2 = xy
-            r = min(r, (x2 - x1) // 2, (y2 - y1) // 2)
-            # 用圆角 polygon 近似
-            pts = [
-                (x1 + r, y1), (x2 - r, y1),
-                (x2, y1), (x2, y1 + r),
-                (x2, y2 - r), (x2, y2),
-                (x2 - r, y2), (x1 + r, y2),
-                (x1, y2), (x1, y2 - r),
-                (x1, y1 + r), (x1, y1),
-            ]
-            draw_obj.polygon(pts, fill=fill)
-            if outline:
-                draw_obj.polygon(pts, fill=None, outline=outline)
-
-        _round_rect(draw, (panel_x, 52, panel_x + panel_w, H - 52), 12,
-                    fill="#111128", outline="#2a2a50", width=1)
-
-        # ── 标题区 ──
-        draw.text((panel_x + panel_w // 2, 74), f"✦ {title}羁绊统计",
+        draw.text((panel_x + panel_w // 2, 70), f"{title}羁绊统计",
                   fill="#eeeeee", font=font_stat_bold, anchor="mt")
-        draw.text((panel_x + panel_w // 2, 96), "─ 今日关系数据 ─",
-                  fill="#5a5a80", font=font_small, anchor="mt")
 
-        # ── KPI 卡片区 ──
-        y = 116
-        card_gap = 10
-        card_w = (panel_w - 24) // 2  # 双列卡片
-        card_h = 52
-
+        y = 110
         draw_count = sum(1 for e in edges if e[2] in ("draw", "mutual", "propose"))
         force_count = sum(1 for e in edges if e[2] == "force")
         drawer_count = sum(1 for v in nodes.values() if "drawer" in v["role"])
@@ -1749,114 +1718,65 @@ class RepeatPlusPlugin(Star):
         both_count = sum(1 for v in nodes.values()
                         if "drawer" in v["role"] and "drawn" in v["role"])
 
-        def _kpi_card(draw_obj, cx, cy, w, h, number, label, accent_color):
-            """绘制单个 KPI 卡片"""
-            x1, y1 = cx - w // 2, cy - h // 2
-            x2, y2 = cx + w // 2, cy + h // 2
-            # 卡片背景
-            draw_obj.rectangle([(x1, y1), (x2, y2)], fill="#1a1a38")
-            # 左侧色条
-            draw_obj.rectangle([(x1, y1), (x1 + 3, y2)], fill=accent_color)
-            # 数字
-            draw_obj.text((cx, cy - 2), str(number), fill=accent_color,
-                          font=font_kpi, anchor="mm")
-            # 标签
-            draw_obj.text((cx, cy + 18), label, fill="#8888aa",
-                          font=font_kpi_label, anchor="mt")
-
-        # 卡片的 x 中心
-        card_cx1 = panel_x + 12 + card_w // 2
-        card_cx2 = panel_x + 18 + card_w + card_w // 2
-
-        kpi_data = [
-            (card_cx1, y, n, "总人数", "#5dade2"),
-            (card_cx2, y, len(edges), "总羁绊", "#f39c12"),
+        stats = [
+            ("总人数", f"{n} 人"),
+            ("总羁绊", f"{len(edges)} 条"),
+            ("抽取", f"{draw_count} 条"),
+            ("强娶", f"{force_count} 条"),
+            ("抽取者", f"{drawer_count} 人"),
+            ("被抽者", f"{drawn_count} 人"),
+            ("双向", f"{both_count} 人"),
         ]
-        y += card_h + card_gap
-        kpi_data += [
-            (card_cx1, y, draw_count, "抽取", "#5ef7f0"),
-            (card_cx2, y, force_count, "强娶", "#ff8787"),
-        ]
-        y += card_h + card_gap
-        kpi_data += [
-            (card_cx1, y, drawer_count, "抽取者", "#3498db"),
-            (card_cx2, y, drawn_count, "被抽者", "#e74c3c"),
-        ]
-        y += card_h + card_gap
-        # 双向卡片居中
-        kpi_data.append((panel_x + panel_w // 2, y, both_count, "双向联结", "#c39bdb"))
 
-        for cx, cy, number, label, accent in kpi_data:
-            _kpi_card(draw, cx, cy, card_w, card_h, number, label, accent)
+        for label, value in stats:
+            draw.text((panel_x + 15, y), label, fill="#8888aa", font=font_stat)
+            draw.text((panel_x + panel_w - 15, y), value, fill="#eeeeee",
+                      font=font_stat, anchor="ra")
+            y += 28
 
-        y += card_h + 14
+        # 分隔线
+        y += 8
+        draw.line([(panel_x + 10, y), (panel_x + panel_w - 10, y)],
+                  fill="#2a2a4a", width=1)
+        y += 16
 
-        # ── 分隔线 ──
-        draw.line([(panel_x + 16, y), (panel_x + panel_w - 16, y)],
-                  fill="#2a2a50", width=1)
-        y += 14
-
-        # ── 热门人物榜 ──
-        draw.text((panel_x + panel_w // 2, y), "★ 热门人物",
-                  fill="#f1c40f", font=font_stat_bold, anchor="mt")
-        y += 22
+        # 热门榜
+        draw.text((panel_x + panel_w // 2, y), "* 热门人物",
+                  fill="#f39c12", font=font_stat_bold, anchor="mt")
+        y += 28
 
         top_nodes = sorted(node_list, key=lambda x: nodes[x].get("deg", 0), reverse=True)[:8]
-        medal_colors = ["#f1c40f", "#bdc3c7", "#e67e22"]  # 金银铜
         for i, name in enumerate(top_nodes):
             d = nodes[name].get("deg", 0)
+            medal = ["[1]", "[2]", "[3]"][i] if i < 3 else f"[{i+1}]"
             display_name = name if len(name) <= 8 else name[:8] + ".."
+            draw.text((panel_x + 15, y), f"{medal} {display_name}",
+                      fill="#eeeeee", font=font_small)
+            draw.text((panel_x + panel_w - 15, y), f"{d}条",
+                      fill="#aaaaaa", font=font_small, anchor="ra")
+            y += 22
 
-            # 排行号
-            rank_color = medal_colors[i] if i < 3 else "#555577"
-            rank_text = str(i + 1)
-            bbox_r = draw.textbbox((0, 0), rank_text, font=font_rank)
-            rw = bbox_r[2] - bbox_r[0]
-            draw.text((panel_x + 16, y + 2), rank_text, fill=rank_color,
-                      font=font_rank, anchor="lt")
-
-            # 名字
-            draw.text((panel_x + 36, y + 3), display_name, fill="#cccccc",
-                      font=font_stat, anchor="lt")
-
-            # 连接数徽章
-            badge_text = f"{d}"
-            badge_w = len(badge_text) * 14 + 12
-            bx = panel_x + panel_w - 16 - badge_w
-            draw.rectangle([(bx, y + 3), (bx + badge_w, y + 20)],
-                           fill="#1a1a38" if i >= 3 else "#2a2030")
-            draw.text((bx + badge_w // 2, y + 11), badge_text,
-                      fill=rank_color if i < 3 else "#666688",
-                      font=font_small, anchor="mm")
-
-            y += 26
-
+        # 图例
         y += 12
-
-        # ── 分隔线 ──
-        draw.line([(panel_x + 16, y), (panel_x + panel_w - 16, y)],
-                  fill="#2a2a50", width=1)
+        draw.line([(panel_x + 10, y), (panel_x + panel_w - 10, y)],
+                  fill="#2a2a4a", width=1)
         y += 14
-
-        # ── 图例 ──
-        draw.text((panel_x + panel_w // 2, y), "图例",
-                  fill="#666688", font=font_stat, anchor="mt")
+        draw.text((panel_x + panel_w // 2, y), "图例", fill="#8888aa",
+                  font=font_small, anchor="mt")
         y += 22
-
         legends = [
             ("#3498db", "抽取者"), ("#e74c3c", "被抽者"),
             ("#9b59b6", "双向"), ("#5ef7f0", "抽取边"),
             ("#ff8787", "强娶边"),
         ]
         for color, label in legends:
-            # 色块
-            draw.ellipse([(panel_x + 20, y + 3), (panel_x + 30, y + 13)],
+            draw.ellipse([(panel_x + 15, y + 2), (panel_x + 25, y + 12)],
                          fill=color)
-            draw.text((panel_x + 38, y + 3), label, fill="#9999aa",
-                      font=font_small, anchor="lt")
+            draw.text((panel_x + 32, y + 2), label, fill="#cccccc",
+                      font=font_small)
             y += 20
 
-        # ── 主标题 ──
+        # 主标题
         draw.text((chart_w // 2, 22), f"{title}羁绊关系图",
                   fill="#eeeeee", font=font_title, anchor="mt")
         draw.text((chart_w // 2, 50),
@@ -2172,7 +2092,7 @@ class RepeatPlusPlugin(Star):
         else:
             hub_section = "💕 抽老公/老婆功能未开启，请在管理面板中启用。\n"
         await event.send(event.plain_result(
-            f"\U0001F4DF 复读插件 v1.3.1 指令帮助\n{'─'*30}\n"
+            f"\U0001F4DF 复读插件 v1.3.2 指令帮助\n{'─'*30}\n"
             f"🔧 管理（仅群聊）\n"
             "  /复读开启          在本群开启复读\n"
             "  /复读关闭          在本群关闭复读\n"
@@ -2181,7 +2101,7 @@ class RepeatPlusPlugin(Star):
             f"{'─'*30}\n"
             f"🏆 排行榜（仅群聊）\n{rl}\n{'─'*30}\n{hub_section}"
             f"{'─'*30}\n"
-            f"🔥 v1.3.1 正式版：KPI卡片面板 / 奖牌热门榜 / 极细线\n"
+            f"🔥 v1.3.2 正式版：极细线 / 方向交替 / 简洁面板\n"
             f"⚙️ 更多参数请在 WebUI 管理面板调整"))
 
     # ============================================================
