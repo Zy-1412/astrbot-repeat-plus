@@ -54,10 +54,9 @@
 |------|------|------|
 | AstrBot | `>=4.0.0` | 运行平台 |
 | Playwright | 任意 | 关系图截图（可选，缺失则无法生成关系图） |
-| Jinja2 | 任意 | 关系图模板渲染 |
 
 ```bash
-pip install playwright jinja2
+pip install playwright
 playwright install chromium
 ```
 
@@ -222,7 +221,7 @@ playwright install chromium
 
 | 参数 | 说明 |
 |------|------|
-| 布局引擎 | Vis.js Barnes-Hut 力导向，迭代 100 轮 |
+| 布局引擎 | Vis.js Barnes-Hut 力导向，CDN 加载（jsdelivr + unpkg 回退），迭代 100 轮 |
 | 输出格式 | Playwright 截图 PNG，1600×900 |
 | 主题 | 深色背景 + 节点发光 + 贝塞尔曲线边 |
 | 边类型 | 4 色区分：抽取（青）、强娶（橙）、双向（黄）、求婚（粉） |
@@ -241,6 +240,7 @@ playwright install chromium
 
 | 版本 | 日期 | 主要变更 |
 |------|------|----------|
+| **v2.0.5** | 2026-07-01 | Vis.js 改为 CDN 加载（jsdelivr + unpkg），移除 630KB 嵌入文件，repo 缩小 25%，解决 GitHub 下载超时断开问题 |
 | **v2.0.5** | 2026-07-01 | 抽取概率衰减加权：被抽中的人概率降低（最低 1/20），随时间自然恢复（默认 7 天），新增 `husband_draw_decay_days` 配置 |
 | v2.0.4 | 2026-06-30 | 随机性强化：`secrets.choice` 替换 `random.choice`，全员池回退时输出 WARNING 日志 |
 | v2.0.3 | 2026-06-30 | 关系图稳定性：Playwright 自动重试（最多 2 次），`asyncio.gather` 并行 API 40-60% 加速，降分辨率渲染 |

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""AstrBot 复读增强插件 v2.0.5 — 抽取概率衰减加权：被抽过降权，随时间恢复"""
+"""AstrBot 复读增强插件 v2.0.5 — Vis.js CDN 加速：移除 630KB 嵌入文件，repo 瘦身 25%"""
 
 import random, logging, time, re, copy, asyncio, json, os
 from typing import Dict, List, Set, Optional, Tuple, Any
@@ -1373,14 +1373,11 @@ class RepeatPlusPlugin(Star):
         # 发送提示，让用户知道正在处理
         tip = await event.send(event.plain_result("🔍 正在生成关系图，请稍候..."))
 
-        # 读取 Vis.js 和模板
-        vis_js = os.path.join(self.curr_dir, "vis-network.min.js")
+        # 读取模板
         tpl = os.path.join(self.curr_dir, "template", "relation_graph.html")
-        if not os.path.exists(vis_js) or not os.path.exists(tpl):
+        if not os.path.exists(tpl):
             await event.send(event.plain_result("❌ 关系图模板文件缺失，请重新安装插件。"))
             return
-        with open(vis_js, "r", encoding="utf-8") as f:
-            vis_js_content = f.read()
         with open(tpl, "r", encoding="utf-8") as f:
             html = f.read()
 
@@ -1454,7 +1451,6 @@ class RepeatPlusPlugin(Star):
                 url = await self.html_render(
                     html,
                     {
-                        "vis_js_content": vis_js_content,
                         "title": title,
                         "records": records,
                         "user_map": user_map,
