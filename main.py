@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""AstrBot 复读增强插件 v2.0.3 — 关系图稳定性优化：并行API+重试+降配加速"""
+"""AstrBot 复读增强插件 v2.0.4 — 抽取随机性强化：secrets.choice + 全员池回退告警"""
 
-import random, logging, time, re, copy, asyncio, json, os
+import random, logging, time, re, copy, asyncio, json, os, secrets
 from typing import Dict, List, Set, Optional, Tuple, Any
 from collections import deque
 from difflib import SequenceMatcher
@@ -997,6 +997,7 @@ class RepeatPlusPlugin(Star):
             return self._hub_active_pool(gid, uid, bid)
         pool = await self._hub_all_members(event, gid, uid, bid)
         if not pool:
+            self._log(logging.WARNING, f"全员池获取失败，回退到活跃池 (gid={gid})")
             pool = self._hub_active_pool(gid, uid, bid)
         return pool
 
@@ -1026,7 +1027,8 @@ class RepeatPlusPlugin(Star):
             await event.send(event.plain_result(self._hb("draw_empty", mode)))
             return
 
-        husband_id = random.choice(pool)
+        husband_id = secrets.choice(pool)
+        self._dbg(f"抽取池大小={len(pool)}, 抽中={husband_id}")
         husband_name = self._hub_active.get(gid, {}).get(husband_id, {}).get("name", f"用户({husband_id})")
         avatar_url = f"https://q4.qlogo.cn/headimg_dl?dst_uin={husband_id}&spec=640"
 
