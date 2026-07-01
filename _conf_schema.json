@@ -219,6 +219,15 @@
         "default": true,
         "hint": "开启：仅发言过的人可被抽。关闭：全群成员均可被抽（每次调用群成员 API）。"
     },
+    "husband_draw_decay_days": {
+        "group": "💕 抽取设置",
+        "description": "抽取概率衰减天数",
+        "type": "int",
+        "default": 7,
+        "min": 1,
+        "max": 30,
+        "hint": "被抽中的人概率降低，N 天后完全恢复。今天被抽：1/20 概率；N 天后：满概率。设为 1 则几乎无衰减。"
+    },
     "husband_excluded_users": {
         "group": "💕 抽取设置",
         "description": "排除用户 QQ",

@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""AstrBot 复读增强插件 v2.0.5 — 抽取轮换去重：全员被抽过一遍才重置"""
+"""AstrBot 复读增强插件 v2.0.5 — 抽取概率衰减加权：被抽过降权，随时间恢复"""
 
-import random, logging, time, re, copy, asyncio, json, os, secrets
+import random, logging, time, re, copy, asyncio, json, os
 from typing import Dict, List, Set, Optional, Tuple, Any
 from collections import deque
 from difflib import SequenceMatcher
@@ -272,6 +272,7 @@ class RepeatPlusPlugin(Star):
             "hub_daily": 1, "hub_force_cd": 3, "hub_force_daily": 1,
             "hub_propose_daily": 3, "hub_propose_cd": 86400, "hub_active_days": 30,
             "hub_excluded": set(), "hub_keyword": False, "hub_require_active": True,
+            "hub_draw_decay_days": 7,
             "enable_husband": True, "enable_wife": True,
             "at_waifu": False, "auto_set_other_half": False,
             "allow_marry_bot": False, "keyword_trigger_mode": "exact",
@@ -290,7 +291,7 @@ class RepeatPlusPlugin(Star):
         self._hub_rbq: Dict[str, Dict[str, int]] = {}
         self._hub_last_cleanup = 0.0
         self._hub_members_cache: Dict[str, Tuple[List[str], float]] = {}
-        self._hub_drawn_recent: Dict[str, Set[str]] = {}  # 轮换去重：记录近期被抽者
+        self._hub_drawn_recent: Dict[str, Dict[str, float]] = {}  # 抽取概率衰减：{gid: {uid: 上次被抽时间戳}}
 
         # 求婚系统
         self._proposals: Dict[str, Dict[str, Any]] = {}
@@ -522,6 +523,7 @@ class RepeatPlusPlugin(Star):
                 "hub_excluded": self._parse_set("husband_excluded_users"),
                 "hub_keyword": self.config.get("husband_keyword_trigger", False),
                 "hub_require_active": self.config.get("husband_require_active", True),
+                "hub_draw_decay_days": self.config.get("husband_draw_decay_days", 7),
                 "enable_husband": self.config.get("enable_husband", True),
                 "enable_wife": self.config.get("enable_wife", True),
                 "at_waifu": self.config.get("at_waifu", False),
@@ -609,6 +611,12 @@ class RepeatPlusPlugin(Star):
                                if time.time() - v[1] > 300]
                 for g in stale_cache:
                     self._hub_members_cache.pop(g, None)
+                # 清理过期的概率衰减记录（超过 2 倍衰减天数后已无影响）
+                draw_decay = self._cfg.get("hub_draw_decay_days", 7) * 86400 * 2
+                for gid, drawn in self._hub_drawn_recent.items():
+                    stale = [u for u, t in drawn.items() if now - t > draw_decay]
+                    for u in stale:
+                        drawn.pop(u, None)
                 if hub_pruned: self._dbg(f"已清理 {hub_pruned} 个过期活跃用户")
                 force_cd_seconds = self._cfg["hub_force_cd"] * 86400 * 2
                 stale_fc = [u for u, t in self._hub_force_cd.items()
@@ -1001,19 +1009,33 @@ class RepeatPlusPlugin(Star):
         if not pool:
             self._log(logging.WARNING, f"全员池获取失败，回退到活跃池 (gid={gid})")
             pool = self._hub_active_pool(gid, uid, bid)
-
-        # 轮换去重：排除近期已被抽中的人，让所有人都被抽过一遍再重置
-        recent = self._hub_drawn_recent.get(gid, set())
-        if recent:
-            fresh = [u for u in pool if u not in recent]
-            if fresh:
-                pool = fresh
-            else:
-                # 所有人都被抽过一遍了，重置轮换
-                self._hub_drawn_recent[gid] = set()
-                self._log(logging.INFO, f"群 {gid} 全员轮换完成，重置去重池")
-
         return pool
+
+    def _hub_weighted_choice(self, gid: str, pool: List[str]) -> str:
+        """加权随机抽取：近期被抽过的人概率降低，随时间自然恢复。
+        
+        权重公式: weight = max(0.05, min(1.0, days_since_drawn / decay_days))
+        - 从未被抽过: weight = 1.0（满权重）
+        - 今天被抽过: weight = 0.05（1/20 概率，仍可能被抽到）
+        - 衰减天数后: weight = 1.0（完全恢复）
+        """
+        decay_days = self._cfg.get("hub_draw_decay_days", 7)
+        decay_seconds = decay_days * 86400
+        now = time.time()
+        recent = self._hub_drawn_recent.get(gid, {})
+
+        weights = []
+        for uid in pool:
+            last = recent.get(uid, 0)
+            if last <= 0:
+                weights.append(1.0)
+            else:
+                elapsed = now - last
+                w = max(0.05, min(1.0, elapsed / decay_seconds))
+                weights.append(w)
+
+        # random.choices 内部使用 random() 而非 secrets，但权重引入的熵已足够
+        return random.choices(pool, weights=weights, k=1)[0]
 
     async def _cmd_husband_draw(self, event: AstrMessageEvent, mode: str = "husband") -> None:
         gid = await self._hub_guard(event, mode)
@@ -1041,7 +1063,7 @@ class RepeatPlusPlugin(Star):
             await event.send(event.plain_result(self._hb("draw_empty", mode)))
             return
 
-        husband_id = secrets.choice(pool)
+        husband_id = self._hub_weighted_choice(gid, pool)
         self._dbg(f"抽取池大小={len(pool)}, 抽中={husband_id}")
         husband_name = self._hub_active.get(gid, {}).get(husband_id, {}).get("name", f"用户({husband_id})")
         avatar_url = f"https://q4.qlogo.cn/headimg_dl?dst_uin={husband_id}&spec=640"
@@ -1063,8 +1085,8 @@ class RepeatPlusPlugin(Star):
                     "husband_id": husband_id, "husband_name": husband_name,
                     "ts": time.time(), "source": "draw",
                 })
-                # 轮换去重：记录被抽中的人，避免短期内重复抽到
-                self._hub_drawn_recent.setdefault(gid, set()).add(husband_id)
+                # 概率衰减：记录被抽时间，后续抽取时降低权重
+                self._hub_drawn_recent.setdefault(gid, {})[husband_id] = time.time()
                 if self._cfg.get("auto_set_other_half"):
                     other_recs = [r for r in today_recs
                                   if r["user_id"] == husband_id and r.get("source") in ("draw", "mutual")]
