@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""AstrBot 复读增强插件 v2.0.4 — 抽取随机性强化：secrets.choice + 全员池回退告警"""
+"""AstrBot 复读增强插件 v2.0.5 — 抽取轮换去重：全员被抽过一遍才重置"""
 
 import random, logging, time, re, copy, asyncio, json, os, secrets
 from typing import Dict, List, Set, Optional, Tuple, Any
@@ -290,6 +290,7 @@ class RepeatPlusPlugin(Star):
         self._hub_rbq: Dict[str, Dict[str, int]] = {}
         self._hub_last_cleanup = 0.0
         self._hub_members_cache: Dict[str, Tuple[List[str], float]] = {}
+        self._hub_drawn_recent: Dict[str, Set[str]] = {}  # 轮换去重：记录近期被抽者
 
         # 求婚系统
         self._proposals: Dict[str, Dict[str, Any]] = {}
@@ -597,6 +598,7 @@ class RepeatPlusPlugin(Star):
                                 self._hub_records.pop(g, None)
                         self._hub_active.pop(g, None)
                         self._hub_members_cache.pop(g, None)
+                        self._hub_drawn_recent.pop(g, None)
                 for g in list(self._hub_records.keys()):
                     rec = self._hub_records[g]
                     if "date" in rec:
@@ -999,6 +1001,18 @@ class RepeatPlusPlugin(Star):
         if not pool:
             self._log(logging.WARNING, f"全员池获取失败，回退到活跃池 (gid={gid})")
             pool = self._hub_active_pool(gid, uid, bid)
+
+        # 轮换去重：排除近期已被抽中的人，让所有人都被抽过一遍再重置
+        recent = self._hub_drawn_recent.get(gid, set())
+        if recent:
+            fresh = [u for u in pool if u not in recent]
+            if fresh:
+                pool = fresh
+            else:
+                # 所有人都被抽过一遍了，重置轮换
+                self._hub_drawn_recent[gid] = set()
+                self._log(logging.INFO, f"群 {gid} 全员轮换完成，重置去重池")
+
         return pool
 
     async def _cmd_husband_draw(self, event: AstrMessageEvent, mode: str = "husband") -> None:
@@ -1049,6 +1063,8 @@ class RepeatPlusPlugin(Star):
                     "husband_id": husband_id, "husband_name": husband_name,
                     "ts": time.time(), "source": "draw",
                 })
+                # 轮换去重：记录被抽中的人，避免短期内重复抽到
+                self._hub_drawn_recent.setdefault(gid, set()).add(husband_id)
                 if self._cfg.get("auto_set_other_half"):
                     other_recs = [r for r in today_recs
                                   if r["user_id"] == husband_id and r.get("source") in ("draw", "mutual")]
@@ -1606,6 +1622,7 @@ class RepeatPlusPlugin(Star):
                 self._hub_records.pop(gid, None)
             if gid in self._hub_rbq:
                 self._hub_rbq.pop(gid, None)
+            self._hub_drawn_recent.pop(gid, None)  # 同时重置轮换去重池
         self._save_persisted_data()
         await event.send(event.plain_result("✅ 本群抽取记录和排行榜已重置！"))
 
